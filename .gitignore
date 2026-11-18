@@ -1,0 +1,7 @@
+# Go build and editor artifacts
+*.test
+*.out
+coverage/
+.idea/
+.vscode/
+.DS_Store
