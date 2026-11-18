@@ -5,6 +5,15 @@ go 1.25.1
 require (
 	github.com/ninepeach/go-base/core v0.0.0
 	github.com/redis/go-redis/v9 v9.17.0
+	go.uber.org/goleak v1.3.0
+)
+
+require (
+	github.com/cespare/xxhash/v2 v2.3.0 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
+	github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203 // indirect
+	github.com/ninepeach/go-logger/v2 v2.0.1 // indirect
+	golang.org/x/sys v0.38.0 // indirect
 )
 
 replace github.com/ninepeach/go-base/core => ../core
