@@ -20,7 +20,7 @@ func (c snapshotConfig) child(path string) snapshotConfig {
 
 func (c snapshotConfig) Decode(path string, dst any) error {
  v := reflect.ValueOf(dst)
- if !v.IsValid() || v.Kind()!=reflect.Pointer || v.IsNil() {
+ if !v.IsValid() || v.Kind()!=reflect.Pointer || v.IsNil() || v.Type().Elem().Kind()==reflect.Interface {
   return fmt.Errorf("%w: destination must be non-nil pointer",ErrInvalidDestination)
  }
  full:=c.prefix
@@ -119,6 +119,7 @@ func decodeInto(dst reflect.Value,src any,path string) error {
    name:=sf.Tag.Get("conf")
    if name=="-" {continue}
    if name=="" {name=sf.Name}
+   if strings.ContainsAny(name,".,") {return fmt.Errorf("%w: invalid field tag at %s",ErrInvalidDestination,path)}
    if _,exists:=fields[name];exists{return fmt.Errorf("%w: duplicate field %s",ErrInvalidDestination,name)}
    fields[name]=i
   }
@@ -158,7 +159,7 @@ func decodeInto(dst reflect.Value,src any,path string) error {
   switch value:=src.(type) {
   case int64:
    x=float64(value)
-   if int64(x)!=value{return typeError()}
+   if x < -9223372036854775808.0 || x >= 9223372036854775808.0 || int64(x)!=value{return typeError()}
   case float64:x=value
   default:return typeError()
   }
