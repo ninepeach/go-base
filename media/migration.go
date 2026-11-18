@@ -10,9 +10,13 @@ import (
 // MigrationSQL generates DDL but never executes it. Apply explicitly during deployment.
 func MigrationSQL(cfg Config) (string, error) {
 	table, err := qualifiedTable(cfg)
-	if err != nil { return "", err }
+	if err != nil {
+		return "", err
+	}
 	schema := cfg.Schema
-	if schema == "" { schema = "public" }
+	if schema == "" {
+		schema = "public"
+	}
 	return fmt.Sprintf(`CREATE SCHEMA IF NOT EXISTS "%s";
 CREATE TABLE IF NOT EXISTS %s (
 	id UUID PRIMARY KEY,
@@ -31,16 +35,24 @@ CREATE INDEX IF NOT EXISTS "%s_cleanup_idx" ON %s (state,updated_at) WHERE state
 
 func indexName(cfg Config) string {
 	table := cfg.Table
-	if table == "" { table = "media_objects" }
+	if table == "" {
+		table = "media_objects"
+	}
 	return table
 }
 
 // Migrate explicitly executes Media DDL. It is never called from Component.Start.
 func Migrate(ctx context.Context, db *pgxpool.Pool, cfg Config) error {
-	if db == nil { return fmt.Errorf("media: nil migration database") }
+	if db == nil {
+		return fmt.Errorf("media: nil migration database")
+	}
 	sql, err := MigrationSQL(cfg)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	_, err = db.Exec(ctx, sql)
-	if err != nil { return fmt.Errorf("media: migration: %w", err) }
+	if err != nil {
+		return fmt.Errorf("media: migration: %w", err)
+	}
 	return nil
 }
