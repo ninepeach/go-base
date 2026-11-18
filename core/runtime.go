@@ -24,11 +24,22 @@ type componentEnv struct {
 	name   string
 	config Config
 	logger *slog.Logger
+	started []runningComponent
 }
 
 func (e componentEnv) Name() string         { return e.name }
 func (e componentEnv) Config() Config       { return e.config }
 func (e componentEnv) Logger() *slog.Logger { return e.logger }
+
+// Lookup resolves only components that completed Start before this component.
+func (e componentEnv) Lookup(key Key, instance string) (Component, error) {
+	for _, item := range e.started {
+		if key.token != nil && item.key.token == key.token && item.instance == instance {
+			return item.component, nil
+		}
+	}
+	return nil, ErrNotRegistered
+}
 
 // New builds and starts components in registration order.
 // If startup fails, previously started components are closed in reverse order using
@@ -88,7 +99,7 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 		if c == nil {
 			return nil, errors.Join(fmt.Errorf("base: build %s: nil component", name), rollback(rt.components))
 		}
-		env := componentEnv{name: name, config: config.child("components." + r.key.provider + "." + r.instance), logger: rt.logger.With("component", name)}
+		env := componentEnv{name: name, config: config.child("components." + r.key.provider + "." + r.instance), logger: rt.logger.With("component", name), started: append([]runningComponent(nil), rt.components...)}
 		if err := c.Start(ctx, env); err != nil {
 			return nil, errors.Join(fmt.Errorf("base: start %s: %w", name, err), rollback(rt.components))
 		}
