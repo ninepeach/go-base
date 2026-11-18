@@ -9,7 +9,7 @@ import (
 )
 
 type configCapture struct {
-	name string
+	name  string
 	value string
 }
 
@@ -29,7 +29,7 @@ func (c *configCapture) Start(_ context.Context, env Env) error {
 }
 
 func (*configCapture) Health(context.Context) error { return nil }
-func (*configCapture) Close(context.Context) error { return nil }
+func (*configCapture) Close(context.Context) error  { return nil }
 
 func TestRuntimeLoadsConfigAndComponentView(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "app.conf")
@@ -49,7 +49,9 @@ func TestRuntimeLoadsConfigAndComponentView(t *testing.T) {
 	if c.name != "mock/primary" || c.value != "db-primary" {
 		t.Fatalf("component configuration mismatch: %+v", c)
 	}
-	var app struct { Name string `conf:"name"` }
+	var app struct {
+		Name string `conf:"name"`
+	}
 	if err := rt.Config().Decode("app", &app); err != nil {
 		t.Fatal(err)
 	}

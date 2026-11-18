@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"regexp"
+	"sync/atomic"
 	"time"
 )
 
@@ -14,6 +15,10 @@ var ErrConfigNotFound = errors.New("base: config path not found")
 var ErrConfigType = errors.New("base: config type mismatch")
 var ErrInvalidDestination = errors.New("base: invalid decode destination")
 
+// ErrLookupClosed is returned when Env.Lookup is called after the owning
+// component's Start has returned. Dependencies must be resolved during Start.
+var ErrLookupClosed = errors.New("base: env lookup is only valid during Start")
+
 type emptyConfig struct{}
 
 func (emptyConfig) Decode(path string, dst any) error {
@@ -21,10 +26,11 @@ func (emptyConfig) Decode(path string, dst any) error {
 }
 
 type componentEnv struct {
-	name   string
-	config Config
-	logger *slog.Logger
+	name    string
+	config  Config
+	logger  *slog.Logger
 	started []runningComponent
+	sealed  *atomic.Bool
 }
 
 func (e componentEnv) Name() string         { return e.name }
@@ -32,7 +38,14 @@ func (e componentEnv) Config() Config       { return e.config }
 func (e componentEnv) Logger() *slog.Logger { return e.logger }
 
 // Lookup resolves only components that completed Start before this component.
+// It is valid only while the calling component's Start is running; afterwards
+// it returns ErrLookupClosed, so a component cannot hold the Env and resolve
+// dependencies that may already be closing. The started slice is an immutable
+// copy, so concurrent calls from goroutines spawned inside Start are safe.
 func (e componentEnv) Lookup(key Key, instance string) (Component, error) {
+	if e.sealed != nil && e.sealed.Load() {
+		return nil, ErrLookupClosed
+	}
 	for _, item := range e.started {
 		if key.token != nil && item.key.token == key.token && item.instance == instance {
 			return item.component, nil
@@ -59,7 +72,7 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 			return nil, err
 		}
 	}
-	
+
 	seen := make(map[*privateToken]map[string]bool)
 	providers := make(map[string]*privateToken)
 	for _, r := range o.registrations {
@@ -99,8 +112,16 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 		if c == nil {
 			return nil, errors.Join(fmt.Errorf("base: build %s: nil component", name), rollback(rt.components))
 		}
-		env := componentEnv{name: name, config: config.child("components." + r.key.provider + "." + r.instance), logger: rt.logger.With("component", name), started: append([]runningComponent(nil), rt.components...)}
-		if err := c.Start(ctx, env); err != nil {
+		env := componentEnv{
+			name:    name,
+			config:  config.child("components." + r.key.provider + "." + r.instance),
+			logger:  rt.logger.With("component", name),
+			started: append([]runningComponent(nil), rt.components...),
+			sealed:  new(atomic.Bool),
+		}
+		err = c.Start(ctx, env)
+		env.sealed.Store(true)
+		if err != nil {
 			return nil, errors.Join(fmt.Errorf("base: start %s: %w", name, err), rollback(rt.components))
 		}
 		rt.components = append(rt.components, runningComponent{name: name, key: r.key, instance: r.instance, required: r.required, component: c})

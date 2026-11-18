@@ -8,11 +8,22 @@ import (
 
 type lookupProbe struct {
 	onStart func(Env) error
-	closed *int
+	closed  *int
 }
-func (p *lookupProbe) Start(_ context.Context, e Env) error { if p.onStart != nil { return p.onStart(e) }; return nil }
+
+func (p *lookupProbe) Start(_ context.Context, e Env) error {
+	if p.onStart != nil {
+		return p.onStart(e)
+	}
+	return nil
+}
 func (p *lookupProbe) Health(context.Context) error { return nil }
-func (p *lookupProbe) Close(context.Context) error { if p.closed != nil { *p.closed++ }; return nil }
+func (p *lookupProbe) Close(context.Context) error {
+	if p.closed != nil {
+		*p.closed++
+	}
+	return nil
+}
 
 func TestEnvLookupPriorOnlyAndRollback(t *testing.T) {
 	a := NewKey("first")
@@ -20,31 +31,91 @@ func TestEnvLookupPriorOnlyAndRollback(t *testing.T) {
 	var first Component
 	closed := 0
 	_, err := New(context.Background(), Use(
-		Register(a, "default", func() (Component,error) {
+		Register(a, "default", func() (Component, error) {
 			first = &lookupProbe{closed: &closed}
-			return first,nil
+			return first, nil
 		}),
-		Register(b, "default", func() (Component,error) {
+		Register(b, "default", func() (Component, error) {
 			return &lookupProbe{onStart: func(env Env) error {
 				got, err := env.Lookup(a, "default")
-				if err != nil || got != first { t.Fatalf("prior lookup: %v", err) }
-				if _, err := env.Lookup(b, "default"); !errors.Is(err, ErrNotRegistered) { t.Fatalf("self lookup: %v", err) }
+				if err != nil || got != first {
+					t.Fatalf("prior lookup: %v", err)
+				}
+				if _, err := env.Lookup(b, "default"); !errors.Is(err, ErrNotRegistered) {
+					t.Fatalf("self lookup: %v", err)
+				}
 				return errors.New("intentional failure")
-			}},nil
+			}}, nil
 		}),
 	))
-	if err == nil || closed != 1 { t.Fatalf("expected startup failure and rollback, err=%v closed=%d",err,closed) }
+	if err == nil || closed != 1 {
+		t.Fatalf("expected startup failure and rollback, err=%v closed=%d", err, closed)
+	}
 }
 
 func TestEnvLookupCannotSeeFuture(t *testing.T) {
-	a,b := NewKey("alpha"),NewKey("beta")
-	rt,err := New(context.Background(),Use(
-		Register(a,"default",func()(Component,error){return &lookupProbe{onStart:func(env Env)error{
-			if _,err:=env.Lookup(b,"default"); !errors.Is(err,ErrNotRegistered){t.Fatalf("future lookup: %v",err)}
-			return nil
-		}},nil}),
-		Register(b,"default",func()(Component,error){return &lookupProbe{},nil}),
+	a, b := NewKey("alpha"), NewKey("beta")
+	rt, err := New(context.Background(), Use(
+		Register(a, "default", func() (Component, error) {
+			return &lookupProbe{onStart: func(env Env) error {
+				if _, err := env.Lookup(b, "default"); !errors.Is(err, ErrNotRegistered) {
+					t.Fatalf("future lookup: %v", err)
+				}
+				return nil
+			}}, nil
+		}),
+		Register(b, "default", func() (Component, error) { return &lookupProbe{}, nil }),
 	))
-	if err!=nil { t.Fatal(err) }
-	if err:=rt.Close(context.Background());err!=nil{t.Fatal(err)}
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestEnvLookupSealedAfterStart(t *testing.T) {
+	a, b := NewKey("dep"), NewKey("user")
+	var kept Env
+	rt, err := New(context.Background(), Use(
+		Register(a, "default", func() (Component, error) { return &lookupProbe{}, nil }),
+		Register(b, "default", func() (Component, error) {
+			return &lookupProbe{onStart: func(env Env) error {
+				if _, err := env.Lookup(a, "default"); err != nil {
+					return err
+				}
+				kept = env
+				return nil
+			}}, nil
+		}),
+	))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rt.Close(context.Background())
+	if _, err := kept.Lookup(a, "default"); !errors.Is(err, ErrLookupClosed) {
+		t.Fatalf("lookup after Start: want ErrLookupClosed, got %v", err)
+	}
+	if kept.Logger() == nil || kept.Name() != "user/default" {
+		t.Fatal("logger and name must remain usable after Start")
+	}
+}
+
+func TestEnvLookupSealedAfterFailedStart(t *testing.T) {
+	a := NewKey("failing")
+	var kept Env
+	_, err := New(context.Background(), Use(
+		Register(a, "default", func() (Component, error) {
+			return &lookupProbe{onStart: func(env Env) error {
+				kept = env
+				return errors.New("boom")
+			}}, nil
+		}),
+	))
+	if err == nil {
+		t.Fatal("expected start failure")
+	}
+	if _, err := kept.Lookup(a, "default"); !errors.Is(err, ErrLookupClosed) {
+		t.Fatalf("want ErrLookupClosed, got %v", err)
+	}
 }
