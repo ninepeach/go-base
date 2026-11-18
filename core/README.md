@@ -4,7 +4,7 @@ Core v1 implementation workspace.
 
 Architecture specification: https://github.com/ninepeach/architecture-docs/blob/main/projects/go-base/core.md
 
-Status: initial scaffolding. Runtime lifecycle, configuration decoding and provider modules are not yet implemented. Do not treat this package as production-ready.
+Status: Core lifecycle and strict configuration decoding are implemented. Provider SDK modules remain separate.
 
 Go >= 1.25.1. This module must not depend on PostgreSQL, Redis, SMTP or S3 SDKs.
 
@@ -23,3 +23,37 @@ resources it partially initialized; Core rolls back only components whose
 
 The timeout is a cooperative deadline: components must honor the context for
 bounded cleanup; Core cannot forcibly interrupt a blocking `Close`.
+
+## Configuration and logging
+
+Use `WithConfig("config/app.conf")` to load a go-conf configuration file.
+Parsing is strict: duplicate keys are rejected, includes are confined to the
+configuration file directory, and environment references remain strings.
+Configuration parsing finishes before any component Build/Start is invoked.
+The runtime retains a read-only snapshot; `rt.Config()` decodes from its root,
+while `Env.Config()` decodes relative to
+`components.<provider>.<instance>`. Decode never exposes the source map.
+
+Example:
+
+```conf
+app {
+  name: 'example'
+}
+components {
+  mock {
+    primary {
+      dsn: 'db-primary'
+    }
+  }
+}
+```
+
+Core uses go-logger/v2's slog adapter and exposes only `*slog.Logger`.
+`rt.Logger()` returns the runtime logger; each component's
+`Env.Logger()` is bound to its full component name. The default logger
+writes to stderr. Core does not own a file or syslog writer and does not
+close any caller-provided writer.
+
+The runtime does not automatically convert environment strings to numbers.
+Explicit typed environment override mapping is not yet exposed by Core.
