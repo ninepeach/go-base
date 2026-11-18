@@ -1,19 +1,42 @@
 # go-base/media
 
-Media is a higher-level file resource service built on the independent PostgreSQL and S3 providers. It is **not** part of Core and does not wrap SQL queries, cache logic, or HTTP.
+Media is a **capability module**, not a thin infrastructure provider. PostgreSQL, Redis, S3 and Mailer remain thin lifecycle providers without business tables. Media owns only its internal file metadata; the application owns file associations and all authorization decisions.
 
-## Setup
+## Lifecycle
 
-1. Apply `schema.sql` to your PostgreSQL database.
-2. Register and start `postgres.Register("primary", ...)` and `s3.Register("default", ...)` in Core.
-3. Resolve the service with `media.From(rt, media.Config{PostgresInstance: "primary", S3Instance: "default", Bucket: "files"})`.
-4. Call `Upload`, `Get`, `Open` or `Delete`.
+Register providers before Media, in this exact order:
 
-The caller must close the stream returned by `Open`. Media does not own the PostgreSQL pool or S3 client; Runtime manages their lifecycle.
+```go
+rt, err := base.New(ctx, base.Use(
+    postgres.Register("primary", postgres.Config{DSN: dsn}),
+    s3.Register("objects", s3.Config{Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, UseTLS: true}),
+    media.Register("files", media.Config{
+        PostgresInstance: "primary",
+        S3Instance: "objects",
+        Bucket: "files",
+        MaxSize: 100 << 20,
+        CleanupInterval: time.Minute,
+        StaleAfter: 15 * time.Minute,
+    }),
+))
+if err != nil { return err }
+defer rt.Close(context.Background())
+files, err := media.FromComponent(rt, "files")
+```
 
-## Failure semantics
+The runtime's `Env.Lookup` only exposes previously started components. Media starts its own reconciliation goroutine, which Runtime closes in reverse registration order before PostgreSQL and S3. Do not close provider clients independently while Media is running.
 
-- Upload writes S3 first and then PostgreSQL. If the database insert fails, Media attempts S3 compensation using an independent 10-second context. A failed compensation can leave an orphan object; the returned error contains both failures.
-- Delete marks metadata as `deleting` before removing S3 bytes, then removes the row. A failed deletion leaves a retryable row. Repeating `Delete(id)` resumes the operation.
-- There is no distributed transaction across S3 and PostgreSQL. Concurrent deletion and upload require application-level coordination.
-- Media v1 intentionally excludes transcoding, thumbnails, CDN, public URLs, access control, and background retries.
+## Migrations
+
+Media does **not** auto-migrate. Apply `media.MigrationSQL(cfg)` with your migration runner, or explicitly call `media.Migrate(ctx, db, cfg)` before Runtime startup. Set `Schema` and `Table` on Config to choose SQL identifiers; identifiers are strictly validated. `schema.sql` is the default-schema reference migration, not a substitute for migration versioning.
+
+## File protocol
+
+- Upload inserts a `pending` row containing a UUID-derived object key before uploading to S3. On successful upload it transitions to `ready`. Failed uploads leave a trackable pending record.
+- Delete transitions the record to `deleting`, removes the S3 object, and deletes the record. Failed operations are retryable.
+- The cleanup worker periodically removes expired `pending` objects and resumes expired `deleting` operations. Its staleness threshold must exceed the longest permitted upload duration.
+- `PresignedGet` returns a short-lived S3 URL; the **application must authorize** the media ID before calling it.
+- `Open` streams an object and returns a reader that the caller must close.
+- Uploads require a known content length and enforce `MaxSize` (default 100 MiB). No image processing, CDN management, public access policies, or business ownership logic is included.
+
+**Important:** PostgreSQL and S3 cannot participate in one atomic transaction. Cleanup is best effort; S3 operations can succeed even when the client sees a network error. Concurrent upload, delete and cleanup, multiple worker instances, crash recovery, and migration upgrades require integration and fault-injection tests before production use.
