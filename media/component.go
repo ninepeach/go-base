@@ -58,7 +58,7 @@ func (c *Component) Start(ctx context.Context, env base.Env) error {
 			case <-workerCtx.Done(): return
 			case <-ticker.C:
 				cleanupCtx, stop := context.WithTimeout(workerCtx, 30*time.Second)
-				_ = service.Cleanup(cleanupCtx)
+				if err := service.Cleanup(cleanupCtx); err != nil && cleanupCtx.Err() == nil { env.Logger().Warn("media cleanup failed", "error", err) }
 				stop()
 			}
 		}
