@@ -13,7 +13,6 @@ var namePattern = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
 var ErrConfigNotFound = errors.New("base: config path not found")
 var ErrConfigType = errors.New("base: config type mismatch")
 var ErrInvalidDestination = errors.New("base: invalid decode destination")
-var ErrConfigUnsupported = errors.New("base: config file loading not implemented")
 
 type emptyConfig struct{}
 
@@ -35,7 +34,7 @@ func (e componentEnv) Logger() *slog.Logger { return e.logger }
 // If startup fails, previously started components are closed in reverse order using
 // an independent context.Background() with a 10-second timeout. Rollback does not
 // inherit the caller context, so cleanup can proceed after caller cancellation.
-// File-backed configuration is intentionally rejected until go-conf integration lands.
+// Configuration files are parsed before any component is built or started.
 func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 	if ctx == nil {
 		return nil, errors.New("base: nil context")
@@ -49,9 +48,7 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 			return nil, err
 		}
 	}
-	if o.configPath != "" {
-		return nil, fmt.Errorf("%w: %s", ErrConfigUnsupported, o.configPath)
-	}
+	
 	seen := make(map[*privateToken]map[string]bool)
 	providers := make(map[string]*privateToken)
 	for _, r := range o.registrations {
@@ -70,7 +67,15 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 		}
 		seen[r.key.token][r.instance] = true
 	}
-	rt := &Runtime{state: StateRunning, config: snapshotConfig{root: map[string]any{}}, logger: slog.Default(), done: make(chan struct{})}
+	config, err := loadConfig(o.configPath)
+	if err != nil {
+		return nil, err
+	}
+	log, err := newRuntimeLogger()
+	if err != nil {
+		return nil, err
+	}
+	rt := &Runtime{state: StateRunning, config: config, logger: log, done: make(chan struct{})}
 	for _, r := range o.registrations {
 		if err := ctx.Err(); err != nil {
 			return nil, errors.Join(err, rollback(rt.components))
@@ -83,7 +88,7 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 		if c == nil {
 			return nil, errors.Join(fmt.Errorf("base: build %s: nil component", name), rollback(rt.components))
 		}
-		env := componentEnv{name: name, config: snapshotConfig{root: map[string]any{}, prefix: "components." + r.key.provider + "." + r.instance}, logger: rt.logger.With("component", name)}
+		env := componentEnv{name: name, config: config.child("components." + r.key.provider + "." + r.instance), logger: rt.logger.With("component", name)}
 		if err := c.Start(ctx, env); err != nil {
 			return nil, errors.Join(fmt.Errorf("base: start %s: %w", name, err), rollback(rt.components))
 		}
