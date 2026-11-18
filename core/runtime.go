@@ -6,7 +6,6 @@ import (
  "fmt"
  "log/slog"
  "regexp"
- "sync"
  "time"
 )
 
