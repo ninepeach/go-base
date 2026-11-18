@@ -48,14 +48,14 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
   if seen[r.key.token][r.instance] { return nil, fmt.Errorf("base: duplicate registration: %s/%s", r.key.provider, r.instance) }
   seen[r.key.token][r.instance] = true
  }
- rt := &Runtime{state: StateRunning, config: emptyConfig{}, logger: slog.Default(), done: make(chan struct{})}
+ rt := &Runtime{state: StateRunning, config: snapshotConfig{root: map[string]any{}}, logger: slog.Default(), done: make(chan struct{})}
  for _, r := range o.registrations {
   if err := ctx.Err(); err != nil { return nil, errors.Join(err, rollback(rt.components)) }
   name := r.key.provider + "/" + r.instance
   c, err := r.build()
   if err != nil { return nil, errors.Join(fmt.Errorf("base: build %s: %w", name, err), rollback(rt.components)) }
   if c == nil { return nil, errors.Join(fmt.Errorf("base: build %s: nil component", name), rollback(rt.components)) }
-  env := componentEnv{name: name, config: rt.config, logger: rt.logger.With("component", name)}
+  env := componentEnv{name: name, config: snapshotConfig{root: map[string]any{}, prefix: "components."+r.key.provider+"."+r.instance}, logger: rt.logger.With("component", name)}
   if err := c.Start(ctx, env); err != nil {
    return nil, errors.Join(fmt.Errorf("base: start %s: %w", name, err), rollback(rt.components))
   }
