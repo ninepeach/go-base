@@ -22,6 +22,7 @@ type Env interface {
 	Name() string
 	Config() Config
 	Logger() *slog.Logger
+	Lookup(key Key, instance string) (Component, error)
 }
 type Config interface {
 	Decode(path string, dst any) error
