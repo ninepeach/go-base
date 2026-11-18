@@ -1,6 +1,7 @@
 package base
 
 import (
+	"encoding"
 	"fmt"
 	"math"
 	"reflect"
@@ -63,8 +64,18 @@ func (c snapshotConfig) Decode(path string, dst any) error {
 	return nil
 }
 
+var textUnmarshalerType = reflect.TypeOf((*encoding.TextUnmarshaler)(nil)).Elem()
+
+func implementsTextUnmarshaler(t reflect.Type) bool {
+	return t.Implements(textUnmarshalerType) || (t.Kind() != reflect.Pointer && reflect.PointerTo(t).Implements(textUnmarshalerType))
+}
+
 func cloneValue(v reflect.Value, path string) (reflect.Value, error) {
 	out := reflect.New(v.Type()).Elem()
+	if implementsTextUnmarshaler(v.Type()) {
+		out.Set(v)
+		return out, nil
+	}
 	switch v.Kind() {
 	case reflect.Pointer:
 		if !v.IsNil() {
@@ -142,6 +153,32 @@ func decodeInto(dst reflect.Value, src any, path string) error {
 		default:
 			return fmt.Errorf("%w: null at %s", ErrConfigType, path)
 		}
+	}
+	if implementsTextUnmarshaler(dst.Type()) {
+		value, ok := src.(string)
+		if !ok {
+			return fmt.Errorf("%w: %s expects %s", ErrConfigType, path, dst.Type())
+		}
+		var target reflect.Value
+		if dst.Kind() == reflect.Pointer {
+			target = reflect.New(dst.Type().Elem())
+			if !target.Type().Implements(textUnmarshalerType) {
+				return fmt.Errorf("%w: unsupported destination type %s at %s", ErrInvalidDestination, dst.Type(), path)
+			}
+		} else {
+			target = reflect.New(dst.Type())
+			target.Elem().Set(dst)
+		}
+		unmarshaler := target.Interface().(encoding.TextUnmarshaler)
+		if err := unmarshaler.UnmarshalText([]byte(value)); err != nil {
+			return fmt.Errorf("%w: %s expects %s", ErrConfigType, path, dst.Type())
+		}
+		if dst.Kind() == reflect.Pointer {
+			dst.Set(target)
+		} else {
+			dst.Set(target.Elem())
+		}
+		return nil
 	}
 	if dst.Kind() == reflect.Pointer {
 		if dst.IsNil() {
