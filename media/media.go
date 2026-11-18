@@ -29,6 +29,7 @@ type Config struct {
 	S3Instance string
 	Bucket string
 	Prefix string
+	MaxSize int64
 }
 
 type File struct {
@@ -70,28 +71,28 @@ func From(rt *base.Runtime, cfg Config) (*Service, error) {
 	return New(db, store, cfg)
 }
 
-// Upload stores the object first, then commits metadata. Failed metadata writes
-// trigger a best-effort object removal with an independent cleanup deadline.
+// Upload records a pending object before streaming bytes to S3.
+// Pending rows remain available for later reconciliation if any step fails.
 func (s *Service) Upload(ctx context.Context, filename, contentType string, input io.Reader, size int64) (File, error) {
 	if input == nil || size < 0 || filename == "" || contentType == "" {
 		return File{}, errors.New("media: invalid upload parameters")
 	}
+	if s.cfg.MaxSize > 0 && size > s.cfg.MaxSize {
+		return File{}, errors.New("media: upload exceeds size limit")
+	}
 	id := uuid.New()
 	key := path.Join(s.cfg.Prefix, id.String())
-	info, err := s.store.PutObject(ctx, s.cfg.Bucket, key, input, size, minio.PutObjectOptions{ContentType: contentType})
-	if err != nil { return File{}, fmt.Errorf("media: upload object: %w", err) }
-	file := File{ID: id, Bucket: s.cfg.Bucket, Key: key, Filename: filename, ContentType: contentType, Size: info.Size}
-	_, err = s.db.Exec(ctx, `INSERT INTO media_objects (id, bucket, object_key, filename, content_type, size_bytes, state)
-		VALUES ($1, $2, $3, $4, $5, $6, 'ready')`,
+	file := File{ID: id, Bucket: s.cfg.Bucket, Key: key, Filename: filename, ContentType: contentType, Size: size}
+	_, err := s.db.Exec(ctx, `INSERT INTO media_objects (id, bucket, object_key, filename, content_type, size_bytes, state)
+		VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
 		file.ID, file.Bucket, file.Key, file.Filename, file.ContentType, file.Size)
-	if err != nil {
-		cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		if removeErr := s.store.RemoveObject(cleanup, file.Bucket, file.Key, minio.RemoveObjectOptions{}); removeErr != nil {
-			return File{}, errors.Join(fmt.Errorf("media: persist metadata: %w", err), fmt.Errorf("media: rollback object %s: %w", file.Key, removeErr))
-		}
-		return File{}, fmt.Errorf("media: persist metadata: %w", err)
-	}
+	if err != nil { return File{}, fmt.Errorf("media: create pending metadata: %w", err) }
+	info, err := s.store.PutObject(ctx, s.cfg.Bucket, key, io.LimitReader(input, size+1), size, minio.PutObjectOptions{ContentType: contentType})
+	if err != nil { return File{}, fmt.Errorf("media: upload pending object %s: %w", id, err) }
+	if info.Size != size { return File{}, fmt.Errorf("media: upload size mismatch for %s", id) }
+	err = s.db.QueryRow(ctx, `UPDATE media_objects SET state='ready', updated_at=now()
+		WHERE id=$1 AND state='pending' RETURNING created_at`, id).Scan(&file.CreatedAt)
+	if err != nil { return File{}, fmt.Errorf("media: finalize pending object %s: %w", id, err) }
 	return file, nil
 }
 
@@ -123,7 +124,7 @@ func (s *Service) Open(ctx context.Context, id uuid.UUID) (io.ReadCloser, File, 
 // removal leaves a retryable 'deleting' row; repeated Delete calls resume it.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	var bucket, key string
-	err := s.db.QueryRow(ctx, `UPDATE media_objects SET state='deleting' WHERE id=$1
+	err := s.db.QueryRow(ctx, `UPDATE media_objects SET state='deleting', updated_at=now() WHERE id=$1
 		RETURNING bucket, object_key`, id).Scan(&bucket, &key)
 	if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
 	if err != nil { return fmt.Errorf("media: mark deleting: %w", err) }
