@@ -22,7 +22,7 @@ jobs:
           go-version: '1.25.1'
       - name: Format check
         run: |
-          test -z "$(gofmt -l postgres/*.go redis/*.go mailer/*.go s3/*.go)"
+          test -z "$(gofmt -l postgres/*.go redis/*.go mailer/*.go s3/*.go media/*.go)"
       - name: Prepare dependency checksums
         run: |
           for mod in postgres redis mailer s3 media; do
