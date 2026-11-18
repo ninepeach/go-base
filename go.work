@@ -6,4 +6,5 @@ use (
 	./redis
 	./mailer
 	./s3
+	./media
 )
