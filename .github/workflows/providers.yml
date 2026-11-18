@@ -7,6 +7,7 @@ on:
       - 'redis/**'
       - 'mailer/**'
       - 's3/**'
+      - 'media/**'
       - 'core/**'
       - 'go.work'
       - '.github/workflows/providers.yml'
@@ -24,11 +25,11 @@ jobs:
           test -z "$(gofmt -l postgres/*.go redis/*.go mailer/*.go s3/*.go)"
       - name: Prepare dependency checksums
         run: |
-          for mod in postgres redis mailer s3; do
+          for mod in postgres redis mailer s3 media; do
             (cd "$mod" && GOWORK=off go mod tidy)
           done
       - name: Tests, race detector and vet
         run: |
-          for mod in postgres redis mailer s3; do
+          for mod in postgres redis mailer s3 media; do
             (cd "$mod" && GOWORK=off go test ./... && GOWORK=off go test -race ./... && GOWORK=off go vet ./...)
           done
