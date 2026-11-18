@@ -11,7 +11,9 @@ func TestConfigDecodeTextUnmarshalerTime(t *testing.T) {
 	want := time.Date(2026, 11, 18, 12, 34, 56, 0, time.UTC)
 	cfg := snapshotConfig{root: map[string]any{"when": "2026-11-18T12:34:56Z"}}
 	var got time.Time
-	if err := cfg.Decode("when", &got); err != nil { t.Fatal(err) }
+	if err := cfg.Decode("when", &got); err != nil {
+		t.Fatal(err)
+	}
 	if !got.Equal(want) {
 		t.Fatalf("got %v, want %v", got, want)
 	}
@@ -47,9 +49,9 @@ func TestConfigDecodeTextUnmarshalerRejectsNonString(t *testing.T) {
 func TestConfigDecodeTextUnmarshalerNested(t *testing.T) {
 	const timestamp = "2026-11-18T12:34:56Z"
 	type nested struct {
-		When time.Time `conf:"when"`
-		Pointer *time.Time `conf:"pointer"`
-		Items []time.Time `conf:"items"`
+		When    time.Time   `conf:"when"`
+		Pointer *time.Time  `conf:"pointer"`
+		Items   []time.Time `conf:"items"`
 	}
 	cfg := snapshotConfig{root: map[string]any{
 		"app": map[string]any{
@@ -59,7 +61,9 @@ func TestConfigDecodeTextUnmarshalerNested(t *testing.T) {
 		},
 	}}
 	var dst nested
-	if err := cfg.Decode("app", &dst); err != nil { t.Fatal(err) }
+	if err := cfg.Decode("app", &dst); err != nil {
+		t.Fatal(err)
+	}
 	expected, err := time.Parse(time.RFC3339, timestamp)
 	if err != nil {
 		t.Fatal(err)
