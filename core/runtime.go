@@ -93,9 +93,10 @@ func (rt *Runtime) Health(ctx context.Context) HealthReport {
  items := append([]runningComponent(nil),rt.components...)
  rt.mu.RUnlock()
  report := HealthReport{State:state, Healthy:state==StateRunning, Components:make([]ComponentHealth,0,len(items))}
+ if state == StateClosed { report.Err = ErrClosed } else if state == StateClosing { report.Err = ErrNotRunning }
  for _, item := range items {
   var err error
-  if state != StateRunning { err=ErrNotRunning
+  if state != StateRunning { err=report.Err
   } else if e:=ctx.Err();e!=nil { err=e
   } else { err=item.component.Health(ctx) }
   report.Components=append(report.Components,ComponentHealth{Name:item.name,Required:item.required,Err:err})
