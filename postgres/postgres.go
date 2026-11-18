@@ -77,6 +77,18 @@ func Lookup(rt *base.Runtime, name string) (*pgxpool.Pool, bool, error) {
 	return pool, true, nil
 }
 
+// LookupEnv resolves an already-started provider during another component's Start.
+func LookupEnv(env base.Env, name string) (*pgxpool.Pool, bool, error) {
+	component, err := env.Lookup(key, name)
+	if errors.Is(err, base.ErrNotRegistered) { return nil, false, nil }
+	if err != nil { return nil, false, err }
+	c, ok := component.(*Component)
+	if !ok { return nil, false, errors.New("postgres: unexpected component type") }
+	pool := c.Pool()
+	if pool == nil { return nil, false, base.ErrNotRunning }
+	return pool, true, nil
+}
+
 func From(rt *base.Runtime, name string) *pgxpool.Pool {
 	pool, ok, err := Lookup(rt, name)
 	if err != nil { panic(err) }
