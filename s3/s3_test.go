@@ -37,7 +37,13 @@ func bucketServer(t *testing.T) string {
 
 func TestStartRejectsInvalidConfig(t *testing.T) {
 	ctx := context.Background()
-	for _, cfg := range []Config{{}, {Endpoint: "localhost:9000", AccessKey: "only-access"}} {
+	if err := (&Component{cfg: Config{Endpoint: "localhost:9000"}}).Start(ctx, nil); !errors.Is(err, ErrHealthBucketRequired) {
+		t.Fatalf("missing HealthBucket: want ErrHealthBucketRequired, got %v", err)
+	}
+	if err := (&Component{cfg: Config{Endpoint: "localhost:9000", AllowNoHealthBucket: true}}).Start(ctx, nil); err != nil {
+		t.Fatalf("development opt-out must start: %v", err)
+	}
+	for _, cfg := range []Config{{}, {Endpoint: "localhost:9000", AccessKey: "only-access", AllowNoHealthBucket: true}} {
 		if err := (&Component{cfg: cfg}).Start(ctx, nil); err == nil {
 			t.Fatalf("accepted invalid config %+v", cfg)
 		}

@@ -1,9 +1,10 @@
 // Package s3 adapts an S3-compatible MinIO client to go-base lifecycle.
 // It follows the provider lifecycle contract documented in package postgres.
 //
-// minio.New performs no network I/O, so without HealthBucket neither Start
-// nor Health can detect a wrong endpoint or invalid credentials. Set
-// HealthBucket in production; Start then fails fast on both.
+// minio.New performs no network I/O, so only a HealthBucket check can detect
+// a wrong endpoint or invalid credentials. HealthBucket is therefore required:
+// Start fails without it, and fails fast when the bucket is unreachable or
+// missing. Local development can opt out with AllowNoHealthBucket.
 package s3
 
 import (
@@ -29,8 +30,16 @@ type Config struct {
 	SessionToken string
 	UseTLS       bool
 	Region       string
+	// HealthBucket is checked by Start and Health. Required unless AllowNoHealthBucket.
 	HealthBucket string
+	// AllowNoHealthBucket permits an empty HealthBucket. Development only:
+	// connection and credential errors then surface on first use.
+	AllowNoHealthBucket bool
 }
+
+// ErrHealthBucketRequired is returned by Start when HealthBucket is empty and
+// AllowNoHealthBucket is false.
+var ErrHealthBucketRequired = errors.New("s3: HealthBucket is required (set AllowNoHealthBucket only for development)")
 
 type Component struct {
 	mu     sync.RWMutex
@@ -48,6 +57,9 @@ func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Reg
 func (c *Component) Start(ctx context.Context, _ base.Env) error {
 	if c.cfg.Endpoint == "" {
 		return errors.New("s3: empty endpoint")
+	}
+	if c.cfg.HealthBucket == "" && !c.cfg.AllowNoHealthBucket {
+		return ErrHealthBucketRequired
 	}
 	if (c.cfg.AccessKey == "") != (c.cfg.SecretKey == "") {
 		return errors.New("s3: access key and secret key must be set together")

@@ -15,7 +15,7 @@ func runtimeOptions(t *testing.T, f *fixture, cfg Config) base.Option {
 	t.Helper()
 	return base.Use(
 		postgres.Register("primary", postgres.Config{DSN: testDSN(t)}),
-		s3.Register("objects", s3.Config{Endpoint: strings.TrimPrefix(f.s3.srv.URL, "http://"), Region: "us-east-1"}),
+		s3.Register("objects", s3.Config{Endpoint: strings.TrimPrefix(f.s3.srv.URL, "http://"), Region: "us-east-1", HealthBucket: testBucket}),
 		Register("files", cfg),
 	)
 }
