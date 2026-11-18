@@ -123,19 +123,32 @@ func TestHealthDuringClosingReturnsErrClosedWithoutProbing(t *testing.T) {
 	var probes atomic.Int32
 	rt, err := New(context.Background(), Use(Register(k, "blocking", func() (Component, error) {
 		return &mockComponent{
-			health: func() error { probes.Add(1); return nil },
-			close: func() error { close(entered); <-release; return nil },
+			health: func() error {
+				probes.Add(1)
+				return nil
+			},
+			close: func() error {
+				close(entered)
+				<-release
+				return nil
+			},
 		}, nil
 	})))
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	done := make(chan error, 1)
 	go func() { done <- rt.Close(context.Background()) }()
 	<-entered
 	report := rt.Health(context.Background())
 	close(release)
-	if err := <-done; err != nil { t.Fatal(err) }
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
 	if report.State != StateClosing || report.Healthy || !errors.Is(report.Err, ErrClosed) {
 		t.Fatalf("unexpected closing health: %+v", report)
 	}
-	if probes.Load() != 0 { t.Fatalf("health called during closing: %d", probes.Load()) }
+	if probes.Load() != 0 {
+		t.Fatalf("health called during closing: %d", probes.Load())
+	}
 }
