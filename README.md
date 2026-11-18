@@ -6,7 +6,7 @@ A lightweight Go infrastructure runtime for configuration, component registratio
 
 ## Status
 
-Early implementation. The Core API types and registration scaffolding exist; runtime initialization, lifecycle orchestration, config decoding and providers are not yet complete. Not production-ready.
+Early implementation. Core now has sequential startup, rollback, health aggregation, lookup and single-flight shutdown with initial unit tests. File-backed configuration, strict Config.Decode, logger adapter integration and providers are not yet complete. Not production-ready. Tests have not yet been executed in CI.
 
 ## Modules
 
