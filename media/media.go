@@ -32,6 +32,7 @@ type Config struct {
 	Bucket string
 	Prefix string
 	MaxSize int64
+	MaxUploadDuration time.Duration
 	Schema string
 	Table string
 	CleanupInterval time.Duration
@@ -66,6 +67,8 @@ func New(db *pgxpool.Pool, store *minio.Client, cfg Config) (*Service, error) {
 	if _, err := qualifiedTable(cfg); err != nil { return nil, err }
 	if cfg.MaxSize <= 0 { cfg.MaxSize = 100 << 20 }
 	if cfg.StaleAfter <= 0 { cfg.StaleAfter = 15 * time.Minute }
+	if cfg.MaxUploadDuration <= 0 { cfg.MaxUploadDuration = 10 * time.Minute }
+	if cfg.MaxUploadDuration >= cfg.StaleAfter { return nil, errors.New("media: max upload duration must be less than stale age") }
 	if cfg.CleanupInterval <= 0 { cfg.CleanupInterval = time.Minute }
 	if cfg.CleanupInterval >= cfg.StaleAfter { return nil, errors.New("media: cleanup interval must be less than stale age") }
 	return &Service{db: db, store: store, cfg: cfg}, nil
@@ -98,9 +101,11 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, inpu
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending')`, s.table()),
 		file.ID, file.Bucket, file.Key, file.Filename, file.ContentType, file.Size)
 	if err != nil { return File{}, fmt.Errorf("media: create pending metadata: %w", err) }
-	stopHeartbeat := s.heartbeat(ctx, id)
+	uploadCtx, cancelUpload := context.WithTimeout(ctx, s.cfg.MaxUploadDuration)
+	defer cancelUpload()
+	stopHeartbeat := s.heartbeat(uploadCtx, id)
 	defer stopHeartbeat()
-	info, err := s.store.PutObject(ctx, s.cfg.Bucket, key, io.LimitReader(input, size+1), size, minio.PutObjectOptions{ContentType: contentType})
+	info, err := s.store.PutObject(uploadCtx, s.cfg.Bucket, key, io.LimitReader(input, size+1), size, minio.PutObjectOptions{ContentType: contentType})
 	if err != nil { return File{}, fmt.Errorf("media: upload pending object %s: %w", id, err) }
 	if info.Size != size { return File{}, fmt.Errorf("media: upload size mismatch for %s", id) }
 	err = s.db.QueryRow(ctx, fmt.Sprintf(`UPDATE %s SET state='ready', updated_at=now()
