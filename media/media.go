@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -30,6 +32,10 @@ type Config struct {
 	Bucket string
 	Prefix string
 	MaxSize int64
+	Schema string
+	Table string
+	CleanupInterval time.Duration
+	StaleAfter time.Duration
 }
 
 type File struct {
@@ -57,6 +63,8 @@ func New(db *pgxpool.Pool, store *minio.Client, cfg Config) (*Service, error) {
 			return nil, errors.New("media: invalid object prefix")
 		}
 	}
+	if _, err := qualifiedTable(cfg); err != nil { return nil, err }
+	if cfg.MaxSize <= 0 { cfg.MaxSize = 100 << 20 }
 	return &Service{db: db, store: store, cfg: cfg}, nil
 }
 
@@ -77,21 +85,21 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, inpu
 	if input == nil || size < 0 || filename == "" || contentType == "" {
 		return File{}, errors.New("media: invalid upload parameters")
 	}
-	if s.cfg.MaxSize > 0 && size > s.cfg.MaxSize {
+	if size > s.cfg.MaxSize {
 		return File{}, errors.New("media: upload exceeds size limit")
 	}
 	id := uuid.New()
 	key := path.Join(s.cfg.Prefix, id.String())
 	file := File{ID: id, Bucket: s.cfg.Bucket, Key: key, Filename: filename, ContentType: contentType, Size: size}
-	_, err := s.db.Exec(ctx, `INSERT INTO media_objects (id, bucket, object_key, filename, content_type, size_bytes, state)
-		VALUES ($1, $2, $3, $4, $5, $6, 'pending')`,
+	_, err := s.db.Exec(ctx, fmt.Sprintf(`INSERT INTO %s (id, bucket, object_key, filename, content_type, size_bytes, state)
+		VALUES ($1, $2, $3, $4, $5, $6, 'pending')`, s.table()),
 		file.ID, file.Bucket, file.Key, file.Filename, file.ContentType, file.Size)
 	if err != nil { return File{}, fmt.Errorf("media: create pending metadata: %w", err) }
 	info, err := s.store.PutObject(ctx, s.cfg.Bucket, key, io.LimitReader(input, size+1), size, minio.PutObjectOptions{ContentType: contentType})
 	if err != nil { return File{}, fmt.Errorf("media: upload pending object %s: %w", id, err) }
 	if info.Size != size { return File{}, fmt.Errorf("media: upload size mismatch for %s", id) }
-	err = s.db.QueryRow(ctx, `UPDATE media_objects SET state='ready', updated_at=now()
-		WHERE id=$1 AND state='pending' RETURNING created_at`, id).Scan(&file.CreatedAt)
+	err = s.db.QueryRow(ctx, fmt.Sprintf(`UPDATE %s SET state='ready', updated_at=now()
+		WHERE id=$1 AND state='pending' RETURNING created_at`, s.table()), id).Scan(&file.CreatedAt)
 	if err != nil { return File{}, fmt.Errorf("media: finalize pending object %s: %w", id, err) }
 	return file, nil
 }
@@ -99,8 +107,8 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, inpu
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (File, error) {
 	var f File
 	var state string
-	err := s.db.QueryRow(ctx, `SELECT id, bucket, object_key, filename, content_type, size_bytes, created_at, state
-		FROM media_objects WHERE id=$1`, id).Scan(&f.ID, &f.Bucket, &f.Key, &f.Filename, &f.ContentType, &f.Size, &f.CreatedAt, &state)
+	err := s.db.QueryRow(ctx, fmt.Sprintf(`SELECT id, bucket, object_key, filename, content_type, size_bytes, created_at, state
+		FROM %s WHERE id=$1`, s.table()), id).Scan(&f.ID, &f.Bucket, &f.Key, &f.Filename, &f.ContentType, &f.Size, &f.CreatedAt, &state)
 	if errors.Is(err, pgx.ErrNoRows) { return File{}, ErrNotFound }
 	if err != nil { return File{}, fmt.Errorf("media: read metadata: %w", err) }
 	if state != "ready" { return File{}, ErrDeleting }
@@ -120,19 +128,48 @@ func (s *Service) Open(ctx context.Context, id uuid.UUID) (io.ReadCloser, File, 
 	return object, f, nil
 }
 
-// Delete marks metadata as deleting before removing the object. A failed object
-// removal leaves a retryable 'deleting' row; repeated Delete calls resume it.
+// Delete moves metadata into a retryable state before removing object bytes.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
 	var bucket, key string
-	err := s.db.QueryRow(ctx, `UPDATE media_objects SET state='deleting', updated_at=now() WHERE id=$1
-		RETURNING bucket, object_key`, id).Scan(&bucket, &key)
+	err := s.db.QueryRow(ctx, fmt.Sprintf(`UPDATE %s SET state='deleting', updated_at=now() WHERE id=$1
+		RETURNING bucket, object_key`, s.table()), id).Scan(&bucket, &key)
 	if errors.Is(err, pgx.ErrNoRows) { return ErrNotFound }
 	if err != nil { return fmt.Errorf("media: mark deleting: %w", err) }
+	return s.removeObjectAndRow(ctx, id, bucket, key)
+}
+
+func (s *Service) removeObjectAndRow(ctx context.Context, id uuid.UUID, bucket, key string) error {
 	if err := s.store.RemoveObject(ctx, bucket, key, minio.RemoveObjectOptions{}); err != nil {
-		return fmt.Errorf("media: delete object: %w", err)
+		return fmt.Errorf("media: remove object: %w", err)
 	}
-	if _, err := s.db.Exec(ctx, `DELETE FROM media_objects WHERE id=$1 AND state='deleting'`, id); err != nil {
-		return fmt.Errorf("media: delete metadata: %w", err)
+	if _, err := s.db.Exec(ctx, fmt.Sprintf(`DELETE FROM %s WHERE id=$1 AND state='deleting'`, s.table()), id); err != nil {
+		return fmt.Errorf("media: remove metadata: %w", err)
 	}
 	return nil
+}
+
+// PresignedGet returns a short-lived URL for direct object downloads.
+// Authentication and authorization must be checked by the application first.
+func (s *Service) PresignedGet(ctx context.Context, id uuid.UUID, expiry time.Duration) (*url.URL, error) {
+	if expiry <= 0 || expiry > 7*24*time.Hour { return nil, errors.New("media: invalid URL expiry") }
+	file, err := s.Get(ctx, id)
+	if err != nil { return nil, err }
+	return s.store.PresignedGetObject(ctx, file.Bucket, file.Key, expiry, nil)
+}
+
+var identifierPattern = regexp.MustCompile(`^[a-z_][a-z0-9_]*$`)
+
+func qualifiedTable(cfg Config) (string, error) {
+	schema, table := cfg.Schema, cfg.Table
+	if schema == "" { schema = "public" }
+	if table == "" { table = "media_objects" }
+	if !identifierPattern.MatchString(schema) || !identifierPattern.MatchString(table) {
+		return "", errors.New("media: invalid SQL schema or table identifier")
+	}
+	return `"` + schema + `"."` + table + `"`, nil
+}
+
+func (s *Service) table() string {
+	table, _ := qualifiedTable(s.cfg)
+	return table
 }
