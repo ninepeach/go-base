@@ -32,6 +32,9 @@ func (e componentEnv) Config() Config       { return e.config }
 func (e componentEnv) Logger() *slog.Logger { return e.logger }
 
 // New builds and starts components in registration order.
+// If startup fails, previously started components are closed in reverse order using
+// an independent context.Background() with a 10-second timeout. Rollback does not
+// inherit the caller context, so cleanup can proceed after caller cancellation.
 // File-backed configuration is intentionally rejected until go-conf integration lands.
 func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 	if ctx == nil {
