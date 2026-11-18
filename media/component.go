@@ -18,21 +18,94 @@ var key = base.NewKey("media")
 // Component resolves dependencies during Start and owns the reconciliation worker.
 // It does not own the underlying PostgreSQL or S3 connections.
 type Component struct {
-	cfg     Config
-	mu      sync.RWMutex
-	service *Service
-	cancel  context.CancelFunc
-	done    chan struct{}
-	closed  bool
+	cfg      Config
+	fromFile bool
+	mu       sync.RWMutex
+	service  *Service
+	cancel   context.CancelFunc
+	done     chan struct{}
+	closed   bool
 }
 
-func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
+// fileConfig is the shape of components.media.<instance> in the config file.
+// Durations are Go duration strings such as "10m"; max_size accepts go-conf
+// size suffixes such as 100mb.
+type fileConfig struct {
+	PostgresInstance  string `conf:"postgres_instance"`
+	S3Instance        string `conf:"s3_instance"`
+	Bucket            string `conf:"bucket"`
+	Prefix            string `conf:"prefix"`
+	MaxSize           int64  `conf:"max_size"`
+	MaxUploadDuration string `conf:"max_upload_duration"`
+	Schema            string `conf:"schema"`
+	Table             string `conf:"table"`
+	CleanupInterval   string `conf:"cleanup_interval"`
+	StaleAfter        string `conf:"stale_after"`
+}
+
+// Register registers an instance configured by the components.media.<name>
+// section of the Runtime config file. The section is decoded during Start;
+// a missing section or unknown key fails startup.
+func Register(name string, opts ...base.RegistrationOption) base.Registration {
+	return base.Register(key, name, func() (base.Component, error) {
+		return &Component{fromFile: true}, nil
+	}, opts...)
+}
+
+// RegisterConfig registers an instance with an explicit Config. The config
+// file is not consulted for this instance.
+func RegisterConfig(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
 	return base.Register(key, name, func() (base.Component, error) {
 		return &Component{cfg: cfg}, nil
 	}, opts...)
 }
 
+func loadConfig(env base.Env) (Config, error) {
+	if env == nil {
+		return Config{}, errors.New("media: config: nil env")
+	}
+	var fc fileConfig
+	if err := env.Config().Decode("", &fc); err != nil {
+		return Config{}, fmt.Errorf("media: config: %w", err)
+	}
+	cfg := Config{
+		PostgresInstance: fc.PostgresInstance,
+		S3Instance:       fc.S3Instance,
+		Bucket:           fc.Bucket,
+		Prefix:           fc.Prefix,
+		MaxSize:          fc.MaxSize,
+		Schema:           fc.Schema,
+		Table:            fc.Table,
+	}
+	for _, d := range []struct {
+		field string
+		src   string
+		dst   *time.Duration
+	}{
+		{"max_upload_duration", fc.MaxUploadDuration, &cfg.MaxUploadDuration},
+		{"cleanup_interval", fc.CleanupInterval, &cfg.CleanupInterval},
+		{"stale_after", fc.StaleAfter, &cfg.StaleAfter},
+	} {
+		if d.src == "" {
+			continue
+		}
+		v, err := time.ParseDuration(d.src)
+		if err != nil {
+			return Config{}, fmt.Errorf("media: config: %s is not a valid duration", d.field)
+		}
+		*d.dst = v
+	}
+	return cfg, nil
+}
+
 func (c *Component) Start(ctx context.Context, env base.Env) error {
+	if c.fromFile {
+		cfg, err := loadConfig(env)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
+	}
 	db, ok, err := postgres.LookupEnv(env, c.cfg.PostgresInstance)
 	if err != nil {
 		return err

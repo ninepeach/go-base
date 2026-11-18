@@ -14,9 +14,9 @@ import (
 func runtimeOptions(t *testing.T, f *fixture, cfg Config) base.Option {
 	t.Helper()
 	return base.Use(
-		postgres.Register("primary", postgres.Config{DSN: testDSN(t)}),
-		s3.Register("objects", s3.Config{Endpoint: strings.TrimPrefix(f.s3.srv.URL, "http://"), Region: "us-east-1", HealthBucket: testBucket}),
-		Register("files", cfg),
+		postgres.RegisterConfig("primary", postgres.Config{DSN: testDSN(t)}),
+		s3.RegisterConfig("objects", s3.Config{Endpoint: strings.TrimPrefix(f.s3.srv.URL, "http://"), Region: "us-east-1", HealthBucket: testBucket}),
+		RegisterConfig("files", cfg),
 	)
 }
 
@@ -67,7 +67,7 @@ func TestComponentStartFailsOnMissingBucketAndRollsBack(t *testing.T) {
 
 func TestComponentStartFailsOnMissingDependency(t *testing.T) {
 	cfg := Config{PostgresInstance: "absent", S3Instance: "absent", Bucket: "files"}
-	_, err := base.New(context.Background(), base.Use(Register("files", cfg)))
+	_, err := base.New(context.Background(), base.Use(RegisterConfig("files", cfg)))
 	if !errors.Is(err, base.ErrNotRegistered) {
 		t.Fatalf("want ErrNotRegistered, got %v", err)
 	}

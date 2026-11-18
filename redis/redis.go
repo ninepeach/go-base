@@ -24,20 +24,68 @@ type Config struct {
 	DialTimeout time.Duration
 }
 
-type Component struct {
-	mu     sync.RWMutex
-	cfg    Config
-	client *goredis.Client
-	closed bool
+// fileConfig is the shape of components.redis.<instance> in the config file.
+// dial_timeout is a Go duration string such as "5s".
+type fileConfig struct {
+	Address     string `conf:"address"`
+	Username    string `conf:"username"`
+	Password    string `conf:"password"`
+	DB          int    `conf:"db"`
+	DialTimeout string `conf:"dial_timeout"`
 }
 
-func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
+type Component struct {
+	mu       sync.RWMutex
+	cfg      Config
+	fromFile bool
+	client   *goredis.Client
+	closed   bool
+}
+
+// Register registers an instance configured by the components.redis.<name>
+// section of the Runtime config file. The section is decoded during Start;
+// a missing section or unknown key fails startup.
+func Register(name string, opts ...base.RegistrationOption) base.Registration {
+	return base.Register(key, name, func() (base.Component, error) {
+		return &Component{fromFile: true}, nil
+	}, opts...)
+}
+
+// RegisterConfig registers an instance with an explicit Config. The config
+// file is not consulted for this instance.
+func RegisterConfig(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
 	return base.Register(key, name, func() (base.Component, error) {
 		return &Component{cfg: cfg}, nil
 	}, opts...)
 }
 
-func (c *Component) Start(ctx context.Context, _ base.Env) error {
+func loadConfig(env base.Env) (Config, error) {
+	if env == nil {
+		return Config{}, errors.New("redis: config: nil env")
+	}
+	var fc fileConfig
+	if err := env.Config().Decode("", &fc); err != nil {
+		return Config{}, fmt.Errorf("redis: config: %w", err)
+	}
+	cfg := Config{Address: fc.Address, Username: fc.Username, Password: fc.Password, DB: fc.DB}
+	if fc.DialTimeout != "" {
+		d, err := time.ParseDuration(fc.DialTimeout)
+		if err != nil {
+			return Config{}, errors.New("redis: config: dial_timeout is not a valid duration")
+		}
+		cfg.DialTimeout = d
+	}
+	return cfg, nil
+}
+
+func (c *Component) Start(ctx context.Context, env base.Env) error {
+	if c.fromFile {
+		cfg, err := loadConfig(env)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
+	}
 	if c.cfg.Address == "" {
 		return errors.New("redis: empty address")
 	}

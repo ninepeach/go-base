@@ -55,7 +55,7 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Skip("REDIS_TEST_ADDR not set")
 	}
 	ctx := context.Background()
-	rt, err := base.New(ctx, base.Use(Register("cache", Config{Address: addr})))
+	rt, err := base.New(ctx, base.Use(RegisterConfig("cache", Config{Address: addr})))
 	if err != nil {
 		t.Fatal(err)
 	}

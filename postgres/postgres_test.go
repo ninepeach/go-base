@@ -62,7 +62,7 @@ func TestRuntimeIntegration(t *testing.T) {
 		t.Skip("POSTGRES_TEST_DSN not set")
 	}
 	ctx := context.Background()
-	rt, err := base.New(ctx, base.Use(Register("primary", Config{DSN: dsn})))
+	rt, err := base.New(ctx, base.Use(RegisterConfig("primary", Config{DSN: dsn})))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,12 +6,48 @@ A lightweight Go infrastructure runtime for configuration, component registratio
 
 ## Status
 
-Early implementation. Core now has sequential startup, rollback, health aggregation, lookup and single-flight shutdown with initial unit tests. File-backed configuration, strict Config.Decode, logger adapter integration and providers are not yet complete. Not production-ready. Tests have not yet been executed in CI.
+Pre-release. Core provides sequential startup with rollback, strict `Config.Decode` over go-conf `.conf` files, a go-logger/v2 backed `*slog.Logger`, health aggregation, lookup and single-flight shutdown. APIs may still change before v1.
 
 ## Modules
 
-- `core/` — runtime contracts and lifecycle (work in progress)
-- `postgres/`, `redis/`, etc. — planned independent Go modules; not yet implemented
+- `core/` — runtime contracts and lifecycle
+- `postgres/` — pgxpool provider
+- `redis/` — go-redis provider
+- `mailer/` — SMTP STARTTLS provider
+- `s3/` — S3-compatible (MinIO SDK) provider
+- `media/` — file metadata + object storage capability module
+
+## Configuration
+
+Each provider instance reads `components.<provider>.<instance>` from the Runtime config file. Unknown keys and type mismatches fail startup; values are never echoed in errors.
+
+```conf
+app {
+  name: 'example'
+}
+components {
+  postgres {
+    primary  { dsn: $DATABASE_URL }
+    readonly { dsn: $READONLY_DATABASE_URL }
+  }
+  redis {
+    default { address: 'localhost:6379', dial_timeout: '5s' }
+  }
+}
+```
+
+```go
+rt, err := base.New(ctx,
+    base.WithConfig("config/app.conf"),
+    base.Use(
+        postgres.Register("primary"),
+        postgres.Register("readonly"),
+        redis.Register("default"),
+    ),
+)
+```
+
+`$NAME` references a process environment variable (read as a literal string). Durations are Go duration strings. Every provider also offers `RegisterConfig(name, Config{...})` for explicit, code-supplied configuration that ignores the file.
 
 Go >= 1.25.1. Local development uses `go.work`; consuming applications should import individual modules.
 
@@ -22,8 +58,9 @@ The design source of truth is [Core v1 contract](https://github.com/ninepeach/ar
 ## Development
 
 ```sh
-go test ./core/...
-go test -race ./core/...
+go test -race ./core/... ./postgres/... ./redis/... ./mailer/... ./s3/... ./media/...
 ```
+
+Integration tests need `POSTGRES_TEST_DSN`, `MEDIA_TEST_DSN` and `REDIS_TEST_ADDR`; they are skipped otherwise.
 
 Do not import infrastructure SDKs into the Core module.

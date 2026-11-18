@@ -41,20 +41,62 @@ type Config struct {
 // AllowNoHealthBucket is false.
 var ErrHealthBucketRequired = errors.New("s3: HealthBucket is required (set AllowNoHealthBucket only for development)")
 
-type Component struct {
-	mu     sync.RWMutex
-	cfg    Config
-	client *minio.Client
-	closed bool
+// fileConfig is the shape of components.s3.<instance> in the config file.
+type fileConfig struct {
+	Endpoint            string `conf:"endpoint"`
+	AccessKey           string `conf:"access_key"`
+	SecretKey           string `conf:"secret_key"`
+	SessionToken        string `conf:"session_token"`
+	UseTLS              bool   `conf:"use_tls"`
+	Region              string `conf:"region"`
+	HealthBucket        string `conf:"health_bucket"`
+	AllowNoHealthBucket bool   `conf:"allow_no_health_bucket"`
 }
 
-func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
+type Component struct {
+	mu       sync.RWMutex
+	cfg      Config
+	fromFile bool
+	client   *minio.Client
+	closed   bool
+}
+
+// Register registers an instance configured by the components.s3.<name>
+// section of the Runtime config file. The section is decoded during Start;
+// a missing section or unknown key fails startup.
+func Register(name string, opts ...base.RegistrationOption) base.Registration {
+	return base.Register(key, name, func() (base.Component, error) {
+		return &Component{fromFile: true}, nil
+	}, opts...)
+}
+
+// RegisterConfig registers an instance with an explicit Config. The config
+// file is not consulted for this instance.
+func RegisterConfig(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
 	return base.Register(key, name, func() (base.Component, error) {
 		return &Component{cfg: cfg}, nil
 	}, opts...)
 }
 
-func (c *Component) Start(ctx context.Context, _ base.Env) error {
+func loadConfig(env base.Env) (Config, error) {
+	if env == nil {
+		return Config{}, errors.New("s3: config: nil env")
+	}
+	var fc fileConfig
+	if err := env.Config().Decode("", &fc); err != nil {
+		return Config{}, fmt.Errorf("s3: config: %w", err)
+	}
+	return Config(fc), nil
+}
+
+func (c *Component) Start(ctx context.Context, env base.Env) error {
+	if c.fromFile {
+		cfg, err := loadConfig(env)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
+	}
 	if c.cfg.Endpoint == "" {
 		return errors.New("s3: empty endpoint")
 	}

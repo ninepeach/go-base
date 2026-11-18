@@ -4,26 +4,52 @@ Media is a **capability module**, not a thin infrastructure provider. PostgreSQL
 
 ## Lifecycle
 
-Register providers before Media, in this exact order:
+Register providers before Media, in this exact order. Each instance reads its own `components.<provider>.<instance>` section:
+
+```conf
+components {
+  postgres { primary { dsn: $DATABASE_URL } }
+  s3 {
+    objects {
+      endpoint: 's3.example.com'
+      access_key: $S3_ACCESS_KEY
+      secret_key: $S3_SECRET_KEY
+      use_tls: true
+      health_bucket: 'files'
+    }
+  }
+  media {
+    files {
+      postgres_instance: 'primary'
+      s3_instance: 'objects'
+      bucket: 'files'
+      max_size: 100mb
+      max_upload_duration: '10m'
+      cleanup_interval: '1m'
+      stale_after: '15m'
+    }
+  }
+}
+```
 
 ```go
-rt, err := base.New(ctx, base.Use(
-    postgres.Register("primary", postgres.Config{DSN: dsn}),
-    s3.Register("objects", s3.Config{Endpoint: endpoint, AccessKey: accessKey, SecretKey: secretKey, UseTLS: true, HealthBucket: "files"}),
-    media.Register("files", media.Config{
-        PostgresInstance: "primary",
-        S3Instance: "objects",
-        Bucket: "files",
-        MaxSize: 100 << 20,
-        MaxUploadDuration: 10 * time.Minute,
-        CleanupInterval: time.Minute,
-        StaleAfter: 15 * time.Minute,
-    }),
-))
+rt, err := base.New(ctx,
+    base.WithConfig("config/app.conf"),
+    base.Use(
+        postgres.Register("primary"),
+        s3.Register("objects"),
+        media.Register("files"),
+    ),
+)
 if err != nil { return err }
-defer rt.Close(context.Background())
 files, err := media.FromComponent(rt, "files")
+// ... on shutdown, after stopping request intake:
+shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+defer cancel()
+err = rt.Close(shutdownCtx)
 ```
+
+Media config keys: `postgres_instance`, `s3_instance`, `bucket`, `prefix`, `max_size`, `schema`, `table`, and Go duration strings `max_upload_duration`, `cleanup_interval`, `stale_after`. `media.RegisterConfig("files", media.Config{...})` takes an explicit config instead of the file.
 
 The runtime's `Env.Lookup` only exposes previously started components. Media starts its own reconciliation goroutine, which Runtime closes in reverse registration order before PostgreSQL and S3. Do not close provider clients independently while Media is running.
 

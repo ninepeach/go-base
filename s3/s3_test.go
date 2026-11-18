@@ -72,7 +72,7 @@ func TestHealthBucketChecks(t *testing.T) {
 func TestRuntimeLifecycle(t *testing.T) {
 	endpoint := bucketServer(t)
 	ctx := context.Background()
-	rt, err := base.New(ctx, base.Use(Register("objects", Config{Endpoint: endpoint, Region: "us-east-1", HealthBucket: "present"})))
+	rt, err := base.New(ctx, base.Use(RegisterConfig("objects", Config{Endpoint: endpoint, Region: "us-east-1", HealthBucket: "present"})))
 	if err != nil {
 		t.Fatal(err)
 	}

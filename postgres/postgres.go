@@ -23,20 +23,55 @@ type Config struct {
 	DSN string
 }
 
-type Component struct {
-	mu     sync.RWMutex
-	cfg    Config
-	pool   *pgxpool.Pool
-	closed bool
+// fileConfig is the shape of components.postgres.<instance> in the config file.
+type fileConfig struct {
+	DSN string `conf:"dsn"`
 }
 
-func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
+type Component struct {
+	mu       sync.RWMutex
+	cfg      Config
+	fromFile bool
+	pool     *pgxpool.Pool
+	closed   bool
+}
+
+// Register registers an instance configured by the components.postgres.<name>
+// section of the Runtime config file. The section is decoded during Start;
+// a missing section or unknown key fails startup.
+func Register(name string, opts ...base.RegistrationOption) base.Registration {
+	return base.Register(key, name, func() (base.Component, error) {
+		return &Component{fromFile: true}, nil
+	}, opts...)
+}
+
+// RegisterConfig registers an instance with an explicit Config. The config
+// file is not consulted for this instance.
+func RegisterConfig(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
 	return base.Register(key, name, func() (base.Component, error) {
 		return &Component{cfg: cfg}, nil
 	}, opts...)
 }
 
-func (c *Component) Start(ctx context.Context, _ base.Env) error {
+func loadConfig(env base.Env) (Config, error) {
+	if env == nil {
+		return Config{}, errors.New("postgres: config: nil env")
+	}
+	var fc fileConfig
+	if err := env.Config().Decode("", &fc); err != nil {
+		return Config{}, fmt.Errorf("postgres: config: %w", err)
+	}
+	return Config{DSN: fc.DSN}, nil
+}
+
+func (c *Component) Start(ctx context.Context, env base.Env) error {
+	if c.fromFile {
+		cfg, err := loadConfig(env)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
+	}
 	if c.cfg.DSN == "" {
 		return errors.New("postgres: empty DSN")
 	}

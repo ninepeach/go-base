@@ -34,16 +34,59 @@ type Config struct {
 
 // Client owns no persistent network connection; each Send dials independently.
 type Client struct {
-	mu      sync.RWMutex
-	cfg     Config
-	started bool
-	closed  bool
+	mu       sync.RWMutex
+	cfg      Config
+	fromFile bool
+	started  bool
+	closed   bool
 }
 
-func Register(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
+// fileConfig is the shape of components.mailer.<instance> in the config file.
+// timeout is a Go duration string such as "30s". TLSConfig cannot be set from
+// the file; use RegisterConfig when a private CA or custom TLS is required.
+type fileConfig struct {
+	Address    string `conf:"address"`
+	Username   string `conf:"username"`
+	Password   string `conf:"password"`
+	From       string `conf:"from"`
+	ServerName string `conf:"server_name"`
+	Timeout    string `conf:"timeout"`
+}
+
+// Register registers an instance configured by the components.mailer.<name>
+// section of the Runtime config file. The section is decoded during Start;
+// a missing section or unknown key fails startup.
+func Register(name string, opts ...base.RegistrationOption) base.Registration {
+	return base.Register(key, name, func() (base.Component, error) {
+		return &Client{fromFile: true}, nil
+	}, opts...)
+}
+
+// RegisterConfig registers an instance with an explicit Config. The config
+// file is not consulted for this instance.
+func RegisterConfig(name string, cfg Config, opts ...base.RegistrationOption) base.Registration {
 	return base.Register(key, name, func() (base.Component, error) {
 		return &Client{cfg: cfg}, nil
 	}, opts...)
+}
+
+func loadConfig(env base.Env) (Config, error) {
+	if env == nil {
+		return Config{}, errors.New("mailer: config: nil env")
+	}
+	var fc fileConfig
+	if err := env.Config().Decode("", &fc); err != nil {
+		return Config{}, fmt.Errorf("mailer: config: %w", err)
+	}
+	cfg := Config{Address: fc.Address, Username: fc.Username, Password: fc.Password, From: fc.From, ServerName: fc.ServerName}
+	if fc.Timeout != "" {
+		d, err := time.ParseDuration(fc.Timeout)
+		if err != nil {
+			return Config{}, errors.New("mailer: config: timeout is not a valid duration")
+		}
+		cfg.Timeout = d
+	}
+	return cfg, nil
 }
 
 func resolve(component base.Component, err error) (*Client, bool, error) {
@@ -81,11 +124,18 @@ func From(rt *base.Runtime, name string) *Client {
 }
 
 // Start validates configuration only; SMTP servers are contacted per Send.
-func (c *Client) Start(_ context.Context, _ base.Env) error {
+func (c *Client) Start(_ context.Context, env base.Env) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.closed {
 		return base.ErrClosed
+	}
+	if c.fromFile {
+		cfg, err := loadConfig(env)
+		if err != nil {
+			return err
+		}
+		c.cfg = cfg
 	}
 	if c.cfg.Address == "" || c.cfg.From == "" {
 		return errors.New("mailer: address and sender required")
