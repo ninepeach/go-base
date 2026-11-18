@@ -10,6 +10,7 @@ import (
 var (
  ErrNotRegistered = errors.New("base: component not registered")
  ErrNotRunning = errors.New("base: runtime not running")
+ ErrClosed = errors.New("base: runtime closed")
 )
 
 type Component interface {
@@ -36,6 +37,7 @@ type ComponentHealth struct {
 }
 type HealthReport struct {
  State State
+ Err error
  Components []ComponentHealth
  Healthy bool
 }
