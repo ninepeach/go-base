@@ -21,8 +21,8 @@ github.com/minio/minio-go/v7 v7.0.95 h1:ywOUPg+PebTMTzn9VDsoFJy32ZuARN9zhB+K3IYE
 github.com/minio/minio-go/v7 v7.0.95/go.mod h1:wOOX3uxS334vImCNRVyIDdXX9OsXDm89ToynKgqUKlo=
 github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203 h1:gfCifpdlZL0ZgLc971l67DXeOfulKrlMD4+ytGbYVVg=
 github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203/go.mod h1:fSxd4itsPONkzId+0aXzk4qPgRVWGYr+skoCrmQKprs=
-github.com/ninepeach/go-logger/v2 v2.0.1 h1:hNWQ8r1f3BWaaS48goGvBVzvF7FXhftpMRP6Sxxs3KA=
-github.com/ninepeach/go-logger/v2 v2.0.1/go.mod h1:hPwCA8qs7MuVAm4HlPqEdn7RYgbKTv42UAU5nuuk6+A=
+github.com/ninepeach/go-logger/v2 v2.0.1 h1:PUAg1keaaCzP8ACrxjSd3m6E/y5hSApGVs4PnQv3tjs=
+github.com/ninepeach/go-logger/v2 v2.0.1/go.mod h1:g3kE0uZN6rBuyyQ+t6eWOzVhHhZpxIb0guBgad7JQKc=
 github.com/philhofer/fwd v1.2.0 h1:e6DnBTl7vGY+Gz322/ASL4Gyp1FspeMvx1RNDoToZuM=
 github.com/philhofer/fwd v1.2.0/go.mod h1:RqIHx9QI14HlwKwm98g9Re5prTQ6LdeRQn+gXJFxsJM=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=

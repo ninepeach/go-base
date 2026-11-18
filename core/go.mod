@@ -7,5 +7,3 @@ require (
 	github.com/ninepeach/go-logger/v2 v2.0.1
 	go.uber.org/goleak v1.3.0
 )
-
-require golang.org/x/sys v0.38.0 // indirect

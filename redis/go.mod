@@ -13,7 +13,6 @@ require (
 	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203 // indirect
 	github.com/ninepeach/go-logger/v2 v2.0.1 // indirect
-	golang.org/x/sys v0.38.0 // indirect
 )
 
 replace github.com/ninepeach/go-base/core => ../core
