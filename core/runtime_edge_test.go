@@ -99,7 +99,7 @@ func TestHealthAfterCloseDoesNotProbe(t *testing.T) {
     if err != nil { t.Fatal(err) }
     if err := rt.Close(context.Background()); err != nil { t.Fatal(err) }
     report := rt.Health(context.Background())
-    if report.Healthy || report.State != StateClosed || probes.Load() != 0 {
+    if report.Healthy || report.State != StateClosed || !errors.Is(report.Err, ErrClosed) || probes.Load() != 0 {
         t.Fatalf("invalid closed health: %+v probes=%d", report, probes.Load())
     }
 }
