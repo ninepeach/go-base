@@ -92,6 +92,18 @@ func Lookup(rt *base.Runtime, name string) (*minio.Client, bool, error) {
 	return client, true, nil
 }
 
+// LookupEnv resolves an already-started provider during another component's Start.
+func LookupEnv(env base.Env, name string) (*minio.Client, bool, error) {
+	component, err := env.Lookup(key, name)
+	if errors.Is(err, base.ErrNotRegistered) { return nil, false, nil }
+	if err != nil { return nil, false, err }
+	c, ok := component.(*Component)
+	if !ok { return nil, false, errors.New("s3: unexpected component type") }
+	client := c.Client()
+	if client == nil { return nil, false, base.ErrNotRunning }
+	return client, true, nil
+}
+
 func From(rt *base.Runtime, name string) *minio.Client {
 	client, ok, err := Lookup(rt, name)
 	if err != nil { panic(err) }
