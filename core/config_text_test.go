@@ -12,7 +12,9 @@ func TestConfigDecodeTextUnmarshalerTime(t *testing.T) {
 	cfg := snapshotConfig{root: map[string]any{"when": "2026-11-18T12:34:56Z"}}
 	var got time.Time
 	if err := cfg.Decode("when", &got); err != nil { t.Fatal(err) }
-	if !got.Equal(want) { t.Fatalf("got %v, want %v", got, want) }
+	if !got.Equal(want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
 }
 
 func TestConfigDecodeTextUnmarshalerFailureAtomic(t *testing.T) {
@@ -21,13 +23,17 @@ func TestConfigDecodeTextUnmarshalerFailureAtomic(t *testing.T) {
 		"app": map[string]any{"name": "changed", "when": "not-a-time"},
 	}}
 	type app struct {
-		Name string `conf:"name"`
+		Name string    `conf:"name"`
 		When time.Time `conf:"when"`
 	}
 	dst := app{Name: "original", When: before}
 	err := cfg.Decode("app", &dst)
-	if !errors.Is(err, ErrConfigType) { t.Fatalf("expected ErrConfigType, got %v", err) }
-	if dst.Name != "original" || !dst.When.Equal(before) { t.Fatalf("partial mutation: %+v", dst) }
+	if !errors.Is(err, ErrConfigType) {
+		t.Fatalf("expected ErrConfigType, got %v", err)
+	}
+	if dst.Name != "original" || !dst.When.Equal(before) {
+		t.Fatalf("partial mutation: %+v", dst)
+	}
 }
 
 func TestConfigDecodeTextUnmarshalerRejectsNonString(t *testing.T) {
@@ -55,7 +61,9 @@ func TestConfigDecodeTextUnmarshalerNested(t *testing.T) {
 	var dst nested
 	if err := cfg.Decode("app", &dst); err != nil { t.Fatal(err) }
 	expected, err := time.Parse(time.RFC3339, timestamp)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if !dst.When.Equal(expected) || dst.Pointer == nil || !dst.Pointer.Equal(expected) ||
 		!reflect.DeepEqual(dst.Items, []time.Time{expected, expected}) {
 		t.Fatalf("nested decoding failed: %+v", dst)
