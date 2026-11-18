@@ -462,3 +462,40 @@ func TestConcurrentUploadsAndDeletes(t *testing.T) {
 		t.Fatalf("rows=%d objects=%d, want 10/10", f.rows(t), f.s3.count())
 	}
 }
+
+// A worker whose lease expired mid-operation may resume after another worker
+// already finished the same row. Its remaining steps must be harmless.
+func TestStaleCleanupWorkerResumingIsHarmless(t *testing.T) {
+	f := newFixture(t)
+	ctx := context.Background()
+	file, err := f.svc.Upload(ctx, "a.txt", "text/plain", strings.NewReader("abc"), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := f.svc.Upload(ctx, "b.txt", "text/plain", strings.NewReader("def"), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Worker A claims the row (ready -> deleting), then stalls past its lease.
+	f.s3.setDelete(func(string) int { return 500 })
+	_ = f.svc.Delete(ctx, file.ID)
+	f.s3.setDelete(nil)
+	f.age(t)
+	// Worker B reclaims the expired lease and finishes the row.
+	if err := f.svc.Cleanup(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if f.state(t, file.ID) != "absent" {
+		t.Fatal("worker B must finish the row")
+	}
+	// Worker A resumes with its stale view of the row.
+	if err := f.svc.removeObjectAndRow(ctx, file.ID, file.Bucket, file.Key); err != nil {
+		t.Fatalf("stale worker must be a no-op, got %v", err)
+	}
+	if f.state(t, other.ID) != "ready" {
+		t.Fatal("stale worker affected another file")
+	}
+	if _, ok := f.s3.object(other.Bucket, other.Key); !ok {
+		t.Fatal("stale worker removed another object")
+	}
+}

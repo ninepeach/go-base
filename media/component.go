@@ -54,6 +54,13 @@ func (c *Component) Start(ctx context.Context, env base.Env) error {
 	if err := db.Ping(ctx); err != nil {
 		return fmt.Errorf("media: postgres health: %w", err)
 	}
+	version, err := checkSchema(ctx, db, service.cfg)
+	if err != nil {
+		return err
+	}
+	if version > SchemaVersion() {
+		env.Logger().Warn("media schema is newer than this code", "database", version, "code", SchemaVersion())
+	}
 	exists, err := store.BucketExists(ctx, service.cfg.Bucket)
 	if err != nil {
 		return fmt.Errorf("media: bucket check: %w", err)

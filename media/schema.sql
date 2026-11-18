@@ -1,4 +1,5 @@
--- Explicit migration: application chooses when to execute this SQL.
+-- Reference schema (version 1) without version bookkeeping. Prefer media.Migrate,
+-- which records versions; databases created from this file are adopted by it.
 -- For custom schemas/tables, render the identifier placeholders using a trusted
 -- migration tool; never interpolate untrusted identifiers.
 CREATE TABLE IF NOT EXISTS media_objects (
