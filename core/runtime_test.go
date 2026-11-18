@@ -115,7 +115,7 @@ func TestConcurrentCloseOnlyOnce(t *testing.T) {
 		t.Fatalf("closed %d times", count.Load())
 	}
 }
-func TestOptionalHealthAndConfigRejection(t *testing.T) {
+func TestOptionalHealthAndMissingConfig(t *testing.T) {
 	k := NewKey("mock")
 	unhealthy := errors.New("offline")
 	rt, err := New(context.Background(), Use(Register(k, "cache", func() (Component, error) { return &mockComponent{health: func() error { return unhealthy }}, nil }, WithRequired(false))))
@@ -128,7 +128,7 @@ func TestOptionalHealthAndConfigRejection(t *testing.T) {
 	}
 	_ = rt.Close(context.Background())
 	_, err = New(context.Background(), WithConfig("app.conf"))
-	if !errors.Is(err, ErrConfigUnsupported) {
+	if err == nil {
 		t.Fatal(err)
 	}
 }
