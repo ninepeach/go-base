@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	base "github.com/ninepeach/go-base/core"
 	postgres "github.com/ninepeach/go-base/postgres"
 	s3 "github.com/ninepeach/go-base/s3"
@@ -115,8 +116,8 @@ func (s *Service) Cleanup(ctx context.Context) error {
 	age := s.cfg.StaleAfter
 	if age <= 0 { age = 15*time.Minute }
 	rows, err := s.db.Query(ctx, fmt.Sprintf(
-		"SELECT id, state FROM %s WHERE state IN ('pending','deleting') AND updated_at < now() - $1::interval ORDER BY updated_at LIMIT 100", s.table()),
-		age.String())
+		"SELECT id, state FROM %s WHERE state IN ('pending','deleting') AND updated_at < now() - ($1 * interval '1 second') ORDER BY updated_at LIMIT 100", s.table()),
+		age.Seconds())
 	if err != nil { return fmt.Errorf("media: list cleanup candidates: %w", err) }
 	type item struct { id uuid.UUID; state string }
 	var items []item
@@ -140,11 +141,9 @@ func (s *Service) Cleanup(ctx context.Context) error {
 func (s *Service) cleanupOne(ctx context.Context, id uuid.UUID, state string, age time.Duration) error {
 	var bucket, key string
 	err := s.db.QueryRow(ctx, fmt.Sprintf(
-		"UPDATE %s SET state='deleting', updated_at=now() WHERE id=$1 AND state=$2 AND updated_at < now() - $3::interval RETURNING bucket, object_key", s.table()),
-		id, state, age.String()).Scan(&bucket, &key)
-	if err != nil {
-		// Another worker or active request may have claimed this row.
-		return nil
-	}
+		"UPDATE %s SET state='deleting', updated_at=now() WHERE id=$1 AND state=$2 AND updated_at < now() - ($3 * interval '1 second') RETURNING bucket, object_key", s.table()),
+		id, state, age.Seconds()).Scan(&bucket, &key)
+	if errors.Is(err, pgx.ErrNoRows) { return nil }
+	if err != nil { return err }
 	return s.removeObjectAndRow(ctx, id, bucket, key)
 }
