@@ -55,9 +55,9 @@ func TestConfigDecodeTextUnmarshalerNested(t *testing.T) {
 	}
 	cfg := snapshotConfig{root: map[string]any{
 		"app": map[string]any{
-			"when": timestamp,
+			"when":    timestamp,
 			"pointer": timestamp,
-			"items": []any{timestamp, timestamp},
+			"items":   []any{timestamp, timestamp},
 		},
 	}}
 	var dst nested
