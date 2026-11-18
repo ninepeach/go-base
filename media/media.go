@@ -65,6 +65,9 @@ func New(db *pgxpool.Pool, store *minio.Client, cfg Config) (*Service, error) {
 	}
 	if _, err := qualifiedTable(cfg); err != nil { return nil, err }
 	if cfg.MaxSize <= 0 { cfg.MaxSize = 100 << 20 }
+	if cfg.StaleAfter <= 0 { cfg.StaleAfter = 15 * time.Minute }
+	if cfg.CleanupInterval <= 0 { cfg.CleanupInterval = time.Minute }
+	if cfg.CleanupInterval >= cfg.StaleAfter { return nil, errors.New("media: cleanup interval must be less than stale age") }
 	return &Service{db: db, store: store, cfg: cfg}, nil
 }
 
@@ -95,6 +98,8 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, inpu
 		VALUES ($1, $2, $3, $4, $5, $6, 'pending')`, s.table()),
 		file.ID, file.Bucket, file.Key, file.Filename, file.ContentType, file.Size)
 	if err != nil { return File{}, fmt.Errorf("media: create pending metadata: %w", err) }
+	stopHeartbeat := s.heartbeat(ctx, id)
+	defer stopHeartbeat()
 	info, err := s.store.PutObject(ctx, s.cfg.Bucket, key, io.LimitReader(input, size+1), size, minio.PutObjectOptions{ContentType: contentType})
 	if err != nil { return File{}, fmt.Errorf("media: upload pending object %s: %w", id, err) }
 	if info.Size != size { return File{}, fmt.Errorf("media: upload size mismatch for %s", id) }
@@ -172,4 +177,30 @@ func qualifiedTable(cfg Config) (string, error) {
 func (s *Service) table() string {
 	table, _ := qualifiedTable(s.cfg)
 	return table
+}
+
+// heartbeat refreshes the pending lease while a stream is in progress.
+// If PostgreSQL becomes unavailable, reconciliation may still race a long
+// upload; deployments must choose StaleAfter conservatively.
+func (s *Service) heartbeat(ctx context.Context, id uuid.UUID) func() {
+	interval := s.cfg.StaleAfter / 4
+	if interval > 30*time.Second { interval = 30*time.Second }
+	if interval < time.Second { interval = time.Second }
+	worker, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-worker.Done(): return
+			case <-ticker.C:
+				ping, stop := context.WithTimeout(worker, interval)
+				_, _ = s.db.Exec(ping, fmt.Sprintf(`UPDATE %s SET updated_at=now() WHERE id=$1 AND state='pending'`, s.table()), id)
+				stop()
+			}
+		}
+	}()
+	return func() { cancel(); <-done }
 }
