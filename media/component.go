@@ -193,19 +193,26 @@ func (c *Component) Health(ctx context.Context) error {
 	return service.db.Ping(ctx)
 }
 
-// Close stops the cleanup worker and waits for an in-flight pass to finish,
-// so PostgreSQL and S3 (closed after Media) are never used by a stray pass.
-// If ctx expires first, Close returns ctx.Err(); the pass still ends within
-// the cleanup batch timeout. Repeated calls return nil.
+// Close stops the cleanup worker and waits for it to exit. Concurrent or
+// repeated calls share the same completion channel. A caller whose context
+// expires may return early, but later callers can still wait for worker exit.
+// The owning runtime must not close dependencies until this worker has exited.
 func (c *Component) Close(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("media: nil close context")
+	}
 	c.mu.Lock()
 	cancel, done := c.cancel, c.done
-	c.service, c.cancel, c.done, c.closed = nil, nil, nil, true
+	c.service, c.cancel, c.closed = nil, nil, true
+	// Retain c.done: a second Close must not report success while the
+	// first caller has timed out and cleanup is still running.
 	c.mu.Unlock()
-	if cancel == nil {
+	if cancel != nil {
+		cancel()
+	}
+	if done == nil {
 		return nil
 	}
-	cancel()
 	select {
 	case <-done:
 		return nil
