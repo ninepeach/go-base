@@ -162,6 +162,14 @@ func (rt *Runtime) Get(key Key, instance string) (Component, error) {
 }
 
 func (rt *Runtime) Health(ctx context.Context) HealthReport {
+	if ctx == nil {
+		ctx = context.Background()
+		// A nil context is invalid. Use a canceled context so Health
+		// reports failure without invoking any component health checks.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithCancel(ctx)
+		cancel()
+	}
 	rt.mu.RLock()
 	state := rt.state
 	items := append([]runningComponent(nil), rt.components...)
@@ -191,6 +199,9 @@ func (rt *Runtime) Health(ctx context.Context) HealthReport {
 }
 
 func (rt *Runtime) Close(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("base: nil close context")
+	}
 	rt.mu.Lock()
 	if rt.state != StateRunning {
 		done := rt.done
