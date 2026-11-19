@@ -152,3 +152,49 @@ func TestHealthDuringClosingReturnsErrClosedWithoutProbing(t *testing.T) {
 		t.Fatalf("health called during closing: %d", probes.Load())
 	}
 }
+
+func TestHealthNilContextDoesNotProbe(t *testing.T) {
+	k := NewKey("mock")
+	var probes atomic.Int32
+	rt, err := New(context.Background(), Use(Register(k, "primary", func() (Component, error) {
+		return &mockComponent{health: func() error {
+			probes.Add(1)
+			return nil
+		}}, nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = rt.Close(context.Background()) }()
+	report := rt.Health(nil)
+	if report.Healthy || probes.Load() != 0 || len(report.Components) != 1 ||
+		!errors.Is(report.Components[0].Err, context.Canceled) {
+		t.Fatalf("nil context health: report=%+v probes=%d", report, probes.Load())
+	}
+}
+
+func TestCloseNilContextDoesNotChangeRuntimeState(t *testing.T) {
+	k := NewKey("mock")
+	var closes atomic.Int32
+	rt, err := New(context.Background(), Use(Register(k, "primary", func() (Component, error) {
+		return &mockComponent{close: func() error { closes.Add(1); return nil }}, nil
+	})))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rt.Close(nil); err == nil {
+		t.Fatal("nil context must return an error")
+	}
+	if closes.Load() != 0 {
+		t.Fatal("nil context must not close components")
+	}
+	if _, err := rt.Get(k, "primary"); err != nil {
+		t.Fatalf("runtime should remain running: %v", err)
+	}
+	if err := rt.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if closes.Load() != 1 {
+		t.Fatalf("expected exactly one close, got %d", closes.Load())
+	}
+}
