@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +195,24 @@ func (c *Client) Close(context.Context) error {
 	return nil
 }
 
+// classifyTimeout marks errors caused by ctx (cancellation or the Send
+// timeout) so callers can test them with errors.Is. The connection deadline
+// is set to ctx's deadline, and the socket timer can fire a moment before
+// ctx's own timer: an I/O deadline error while ctx is not yet done is that
+// same timeout, so it is reported as context.DeadlineExceeded too.
+func classifyTimeout(ctx context.Context, err error) error {
+	if err == nil {
+		return nil
+	}
+	if cerr := ctx.Err(); cerr != nil {
+		return fmt.Errorf("mailer: %w: %w", cerr, err)
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return fmt.Errorf("mailer: %w: %w", context.DeadlineExceeded, err)
+	}
+	return err
+}
+
 // Send submits a fully composed RFC 5322 message over mandatory STARTTLS.
 // The caller is responsible for headers, MIME encoding, and recipient validation.
 // Cancelling ctx aborts blocked network I/O immediately.
@@ -228,11 +247,7 @@ func (c *Client) Send(ctx context.Context, recipients []string, message []byte) 
 	// Unblock any pending read or write as soon as ctx is cancelled.
 	stop := context.AfterFunc(ctx, func() { _ = conn.SetDeadline(time.Unix(1, 0)) })
 	defer stop()
-	defer func() {
-		if err != nil && ctx.Err() != nil {
-			err = fmt.Errorf("mailer: %w: %w", ctx.Err(), err)
-		}
-	}()
+	defer func() { err = classifyTimeout(ctx, err) }()
 	client, err := smtp.NewClient(conn, cfg.ServerName)
 	if err != nil {
 		return fmt.Errorf("mailer: smtp handshake: %w", err)

@@ -10,8 +10,10 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"math/big"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -207,6 +209,29 @@ func TestSendTimeoutBoundsStalledServer(t *testing.T) {
 	err := c.Send(context.Background(), []string{"user@example.com"}, []byte("x"))
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("want DeadlineExceeded, got %v", err)
+	}
+}
+
+// TestClassifyTimeout pins the race behind a former flake: the socket
+// deadline (equal to ctx's) fired before ctx's timer, and Send returned a
+// bare I/O timeout instead of context.DeadlineExceeded.
+func TestClassifyTimeout(t *testing.T) {
+	live := context.Background()
+	ioTimeout := &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}
+	if err := classifyTimeout(live, fmt.Errorf("smtp handshake: %w", ioTimeout)); !errors.Is(err, context.DeadlineExceeded) || !errors.Is(err, os.ErrDeadlineExceeded) {
+		t.Fatalf("socket deadline before ctx timer: %v", err)
+	}
+	canceled, cancel := context.WithCancel(live)
+	cancel()
+	if err := classifyTimeout(canceled, ioTimeout); !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled ctx: %v", err)
+	}
+	other := errors.New("550 rejected")
+	if err := classifyTimeout(live, other); err != other {
+		t.Fatalf("unrelated error changed: %v", err)
+	}
+	if classifyTimeout(canceled, nil) != nil {
+		t.Fatal("nil error changed")
 	}
 }
 
