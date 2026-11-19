@@ -10,6 +10,7 @@ import (
 	"path"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -70,11 +71,23 @@ type File struct {
 	CreatedAt   time.Time
 }
 
+// Service is safe for concurrent use. A Service obtained from a Component
+// rejects new calls with base.ErrClosed once the Component is closed; calls
+// already in progress are not interrupted. A Service built with New has no
+// lifecycle of its own and depends on its caller-owned clients.
 type Service struct {
-	db    *pgxpool.Pool
-	store *minio.Client
-	cfg   Config
-	table string
+	db     *pgxpool.Pool
+	store  *minio.Client
+	cfg    Config
+	table  string
+	closed atomic.Bool
+}
+
+func (s *Service) checkOpen() error {
+	if s.closed.Load() {
+		return base.ErrClosed
+	}
+	return nil
 }
 
 func New(db *pgxpool.Pool, store *minio.Client, cfg Config) (*Service, error) {
@@ -160,6 +173,9 @@ func validMetadata(s string) bool {
 // write whose client was cancelled may still commit late, and the second
 // removal guarantees it cannot survive without metadata.
 func (s *Service) Upload(ctx context.Context, filename, contentType string, input io.Reader, size int64) (File, error) {
+	if err := s.checkOpen(); err != nil {
+		return File{}, err
+	}
 	if input == nil || size < 0 || !validMetadata(filename) || !validMetadata(contentType) {
 		return File{}, ErrInvalidUpload
 	}
@@ -181,7 +197,11 @@ func (s *Service) Upload(ctx context.Context, filename, contentType string, inpu
 	err = s.db.QueryRow(ctx, fmt.Sprintf(`UPDATE %s SET state='ready', updated_at=now()
 		WHERE id=$1 AND state='pending' RETURNING created_at`, s.table), id).Scan(&file.CreatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
-		return File{}, ErrUploadAbandoned
+		// Cleanup claimed the row, so it can never become ready. Its removal may
+		// have run before our write landed (only possible if the timing
+		// invariant was violated, e.g. a late server-side commit), so remove the
+		// object we wrote ourselves. RemoveObject is idempotent.
+		return File{}, errors.Join(ErrUploadAbandoned, s.removeOrphan(file))
 	}
 	if err != nil {
 		// The update may have committed without us seeing the result. The
@@ -213,6 +233,17 @@ func (s *Service) putObject(ctx context.Context, file File, input io.Reader) err
 	return nil
 }
 
+// removeOrphan deletes an object whose row can no longer become ready, on a
+// fresh bounded context because the caller's context may be what failed.
+func (s *Service) removeOrphan(file File) error {
+	ctx, cancel := context.WithTimeout(context.Background(), cleanupBatchTimeout)
+	defer cancel()
+	if err := s.store.RemoveObject(ctx, file.Bucket, file.Key, minio.RemoveObjectOptions{}); err != nil {
+		return fmt.Errorf("media: remove object of reclaimed upload %s: %w", file.ID, err)
+	}
+	return nil
+}
+
 // abandon tombstones the row and removes the object on a fresh context,
 // because the caller's context is often what failed.
 func (s *Service) abandon(id uuid.UUID) error {
@@ -235,6 +266,9 @@ func (s *Service) abandon(id uuid.UUID) error {
 
 // Get returns metadata for a ready file. Pending uploads are not visible.
 func (s *Service) Get(ctx context.Context, id uuid.UUID) (File, error) {
+	if err := s.checkOpen(); err != nil {
+		return File{}, err
+	}
 	var f File
 	var state string
 	err := s.db.QueryRow(ctx, fmt.Sprintf(`SELECT id, bucket, object_key, filename, content_type, size_bytes, created_at, state
@@ -257,6 +291,9 @@ func (s *Service) Get(ctx context.Context, id uuid.UUID) (File, error) {
 
 // Open returns an object stream. The caller must close it.
 func (s *Service) Open(ctx context.Context, id uuid.UUID) (io.ReadCloser, File, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, File{}, err
+	}
 	f, err := s.Get(ctx, id)
 	if err != nil {
 		return nil, File{}, err
@@ -277,6 +314,9 @@ func (s *Service) Open(ctx context.Context, id uuid.UUID) (io.ReadCloser, File, 
 // If object removal fails, the row stays in deleting and cleanup retries it;
 // the file is no longer readable either way.
 func (s *Service) Delete(ctx context.Context, id uuid.UUID) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	var bucket, key string
 	err := s.db.QueryRow(ctx, fmt.Sprintf(`UPDATE %s SET state='deleting', updated_at=now()
 		WHERE id=$1 AND state IN ('ready','deleting') RETURNING bucket, object_key`, s.table), id).Scan(&bucket, &key)
@@ -302,6 +342,9 @@ func (s *Service) removeObjectAndRow(ctx context.Context, id uuid.UUID, bucket, 
 // PresignedGet returns a short-lived URL for direct object downloads.
 // Authentication and authorization must be checked by the application first.
 func (s *Service) PresignedGet(ctx context.Context, id uuid.UUID, expiry time.Duration) (*url.URL, error) {
+	if err := s.checkOpen(); err != nil {
+		return nil, err
+	}
 	if expiry <= 0 || expiry > 7*24*time.Hour {
 		return nil, errors.New("media: invalid URL expiry")
 	}
@@ -319,6 +362,9 @@ func (s *Service) PresignedGet(ctx context.Context, id uuid.UUID, expiry time.Du
 // that lease expires. Expired pending rows are deleted, never finalized,
 // because their completeness is unknown. All S3 removals are idempotent.
 func (s *Service) Cleanup(ctx context.Context) error {
+	if err := s.checkOpen(); err != nil {
+		return err
+	}
 	rows, err := s.db.Query(ctx, fmt.Sprintf(`UPDATE %[1]s SET state='deleting', updated_at=now()
 		WHERE id IN (
 			SELECT id FROM %[1]s

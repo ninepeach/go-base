@@ -202,11 +202,14 @@ func (c *Component) Close(ctx context.Context) error {
 		return errors.New("media: nil close context")
 	}
 	c.mu.Lock()
-	cancel, done := c.cancel, c.done
+	service, cancel, done := c.service, c.cancel, c.done
 	c.service, c.cancel, c.closed = nil, nil, true
 	// Retain c.done: a second Close must not report success while the
 	// first caller has timed out and cleanup is still running.
 	c.mu.Unlock()
+	if service != nil {
+		service.closed.Store(true) // handles held by callers stop working now
+	}
 	if cancel != nil {
 		cancel()
 	}

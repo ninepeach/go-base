@@ -53,6 +53,28 @@ func TestComponentLifecycleThroughRuntime(t *testing.T) {
 	if _, err := FromComponent(rt, "files"); err == nil {
 		t.Fatal("service must be unavailable after close")
 	}
+	// A handle obtained before Close is rejected rather than reaching closed clients.
+	if _, err := svc.Upload(ctx, "b.txt", "text/plain", strings.NewReader("abc"), 3); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Upload after close: %v", err)
+	}
+	if _, err := svc.Get(ctx, file.ID); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Get after close: %v", err)
+	}
+	if _, _, err := svc.Open(ctx, file.ID); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Open after close: %v", err)
+	}
+	if err := svc.Delete(ctx, file.ID); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Delete after close: %v", err)
+	}
+	if _, err := svc.PresignedGet(ctx, file.ID, time.Minute); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("PresignedGet after close: %v", err)
+	}
+	if err := svc.Cleanup(ctx); !errors.Is(err, base.ErrClosed) {
+		t.Fatalf("Cleanup after close: %v", err)
+	}
+	if _, err := f.svc.Get(ctx, file.ID); err != nil {
+		t.Fatalf("a Service built with New is not tied to the component: %v", err)
+	}
 	// goleak in TestMain verifies the cleanup worker has exited.
 }
 

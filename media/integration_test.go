@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
@@ -287,6 +288,30 @@ func TestFinalizeLosesToCleanupClaim(t *testing.T) {
 	}
 	if _, state, _ := f.onlyRow(t); state != "deleting" {
 		t.Fatal("a claimed row must never become ready")
+	}
+	// The written object is removed immediately, even if cleanup's removal
+	// already ran before the write landed.
+	if n := f.s3.count(); n != 0 {
+		t.Fatalf("orphaned objects: %d", n)
+	}
+}
+
+func TestFinalizeLossReportsOrphanRemovalFailure(t *testing.T) {
+	f := newFixture(t)
+	f.s3.setPut(func(string) int {
+		if _, err := f.pool.Exec(context.Background(), `UPDATE `+f.svc.table+` SET state='deleting'`); err != nil {
+			t.Error(err)
+		}
+		return 0
+	})
+	f.s3.setDelete(func(string) int { return http.StatusForbidden }) // non-retryable
+	_, err := f.svc.Upload(context.Background(), "a.txt", "text/plain", strings.NewReader("abc"), 3)
+	if !errors.Is(err, ErrUploadAbandoned) || !strings.Contains(err.Error(), "remove object of reclaimed upload") {
+		t.Fatalf("want abandoned plus removal failure, got %v", err)
+	}
+	// The row stays in deleting, so cleanup still owns and retries the object.
+	if _, state, _ := f.onlyRow(t); state != "deleting" {
+		t.Fatalf("state %s", state)
 	}
 }
 
