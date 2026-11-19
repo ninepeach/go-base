@@ -2,13 +2,15 @@ github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203 h1:gfCifpdlZL0ZgLc971l67DXeOfulKrlMD4+ytGbYVVg=
 github.com/ninepeach/go-conf v0.0.0-20261117172750-54bef8051203/go.mod h1:fSxd4itsPONkzId+0aXzk4qPgRVWGYr+skoCrmQKprs=
-github.com/ninepeach/go-logger/v2 v2.0.1 h1:PUAg1keaaCzP8ACrxjSd3m6E/y5hSApGVs4PnQv3tjs=
-github.com/ninepeach/go-logger/v2 v2.0.1/go.mod h1:g3kE0uZN6rBuyyQ+t6eWOzVhHhZpxIb0guBgad7JQKc=
+github.com/ninepeach/go-logger/v2 v2.0.3 h1:va5vU+y34gMxN+hkJf7sFPT2Fm4+QIOOM1RZxwTP1sg=
+github.com/ninepeach/go-logger/v2 v2.0.3/go.mod h1:hPwCA8qs7MuVAm4HlPqEdn7RYgbKTv42UAU5nuuk6+A=
 github.com/pmezard/go-difflib v1.0.0 h1:4DBwDE0NGyQoBHbLQYPwSUPoCMWR5BEzIk/f1lZbAQM=
 github.com/pmezard/go-difflib v1.0.0/go.mod h1:iKH77koFhYxTK1pcRnkKkqfTogsbg7gZNVY4sRDYZ/4=
 github.com/stretchr/testify v1.8.0 h1:pSgiaMZlXftHpm5L7V1+rVB+AZJydKsMxsQBIJw4PKk=
 github.com/stretchr/testify v1.8.0/go.mod h1:yNjHg4UonilssWZ8iaSj1OCr/vHnekPRkoO+kdMU+MU=
 go.uber.org/goleak v1.3.0 h1:2K3zAYmnTNqV73imy9J1T3WC+gmCePx2hEGkimedGto=
 go.uber.org/goleak v1.3.0/go.mod h1:CoHD4mav9JJNrW/WLlf7HGZPjdw8EucARQHekz1X6bE=
+golang.org/x/sys v0.38.0 h1:3yZWxaJjBmCWXqhN1qh02AkOnCQ1poK6oF+a7xWL6Gc=
+golang.org/x/sys v0.38.0/go.mod h1:OgkHotnGiDImocRcuBABYBEXf8A9a87e/uXjp9XT3ks=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=
 gopkg.in/yaml.v3 v3.0.1/go.mod h1:K4uyk7z7BCEPqu6E+C64Yfv1cQ7kz7rIZviUmN+EgEM=
