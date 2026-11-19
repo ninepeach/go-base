@@ -268,8 +268,8 @@ func (c *Client) Send(ctx context.Context, recipients []string, message []byte) 
 	if err := writer.Close(); err != nil {
 		return fmt.Errorf("mailer: data close: %w", err)
 	}
-	if err := client.Quit(); err != nil {
-		return fmt.Errorf("mailer: quit: %w", err)
-	}
+	// The server accepted the message when DATA completed. A failed QUIT must
+	// not be reported as a failed send, or callers would retry and deliver twice.
+	_ = client.Quit()
 	return nil
 }

@@ -95,9 +95,11 @@ func New(ctx context.Context, opts ...Option) (*Runtime, error) {
 	if err != nil {
 		return nil, err
 	}
-	log, err := newRuntimeLogger()
-	if err != nil {
-		return nil, err
+	log := o.logger
+	if log == nil {
+		if log, err = newRuntimeLogger(); err != nil {
+			return nil, err
+		}
 	}
 	rt := &Runtime{state: StateRunning, config: config, logger: log, done: make(chan struct{})}
 	for _, r := range o.registrations {
@@ -175,7 +177,10 @@ func (rt *Runtime) Health(ctx context.Context) HealthReport {
 	items := append([]runningComponent(nil), rt.components...)
 	rt.mu.RUnlock()
 	report := HealthReport{State: state, Healthy: state == StateRunning, Components: make([]ComponentHealth, 0, len(items))}
-	if state == StateClosed || state == StateClosing {
+	switch state {
+	case StateClosing:
+		report.Err = ErrNotRunning
+	case StateClosed:
 		report.Err = ErrClosed
 	}
 	for _, item := range items {

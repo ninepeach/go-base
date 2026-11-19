@@ -71,7 +71,7 @@ func TestInvalidConfigFailsBeforeBuild(t *testing.T) {
 		built = true
 		return &mockComponent{}, nil
 	})))
-	if rt != nil || !errors.Is(err, ErrConfigType) || built {
+	if rt != nil || !errors.Is(err, ErrConfigParse) || built {
 		t.Fatalf("expected pre-build config failure, runtime=%v err=%v built=%v", rt, err, built)
 	}
 }

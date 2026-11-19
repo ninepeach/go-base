@@ -53,6 +53,7 @@ type smtpServer struct {
 	cert     tls.Certificate
 	starttls bool
 	stall    bool
+	failQuit bool // drop the connection instead of answering QUIT
 	mu       sync.Mutex
 	messages []string
 	wg       sync.WaitGroup
@@ -142,7 +143,9 @@ func (s *smtpServer) session(conn net.Conn) {
 			s.mu.Unlock()
 			write("250 queued")
 		case cmd == "QUIT":
-			write("221 bye")
+			if !s.failQuit {
+				write("221 bye")
+			}
 			return
 		default:
 			write("502 unknown")
@@ -242,5 +245,19 @@ func TestValidationAndLifecycle(t *testing.T) {
 	}
 	if err := c.Health(ctx); !errors.Is(err, base.ErrClosed) {
 		t.Fatalf("health after close: %v", err)
+	}
+}
+
+func TestSendSucceedsWhenQuitFailsAfterAcceptedData(t *testing.T) {
+	srv, pool := newSMTPServer(t, true, false)
+	srv.failQuit = true
+	c := started(t, srv.ln.Addr().String(), pool)
+	if err := c.Send(context.Background(), []string{"user@example.com"}, []byte("Subject: x\r\n\r\nbody\r\n")); err != nil {
+		t.Fatalf("accepted message reported as failed (callers would resend): %v", err)
+	}
+	srv.mu.Lock()
+	defer srv.mu.Unlock()
+	if len(srv.messages) != 1 {
+		t.Fatalf("messages: %d", len(srv.messages))
 	}
 }

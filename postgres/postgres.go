@@ -29,11 +29,12 @@ type fileConfig struct {
 }
 
 type Component struct {
-	mu       sync.RWMutex
-	cfg      Config
-	fromFile bool
-	pool     *pgxpool.Pool
-	closed   bool
+	mu        sync.RWMutex
+	cfg       Config
+	fromFile  bool
+	pool      *pgxpool.Pool
+	closed    bool
+	closeDone chan struct{} // closed when pgxpool.Close has returned
 }
 
 // Register registers an instance configured by the components.postgres.<name>
@@ -118,16 +119,37 @@ func (c *Component) Health(ctx context.Context) error {
 	return pool.Ping(ctx)
 }
 
-// Close waits for acquired connections to be released, as pgxpool.Close does.
-func (c *Component) Close(context.Context) error {
-	c.mu.Lock()
-	pool := c.pool
-	c.pool, c.closed = nil, true
-	c.mu.Unlock()
-	if pool != nil {
-		pool.Close()
+// Close rejects new acquisitions and waits, bounded by ctx, for acquired
+// connections to be released. pgxpool.Close blocks until every acquired
+// connection is returned, so it runs in a goroutine owned by this component;
+// that goroutine exits as soon as the last connection is released. If ctx ends
+// first, Close returns an error wrapping ctx.Err() and the pool keeps closing
+// in the background. Repeated calls wait for the same completion.
+func (c *Component) Close(ctx context.Context) error {
+	if ctx == nil {
+		return errors.New("postgres: nil close context")
 	}
-	return nil
+	c.mu.Lock()
+	pool, done := c.pool, c.closeDone
+	c.pool, c.closed = nil, true
+	if pool != nil {
+		done = make(chan struct{})
+		c.closeDone = done
+		go func() {
+			defer close(done)
+			pool.Close()
+		}()
+	}
+	c.mu.Unlock()
+	if done == nil {
+		return nil
+	}
+	select {
+	case <-done:
+		return nil
+	case <-ctx.Done():
+		return fmt.Errorf("postgres: close: acquired connections not released: %w", ctx.Err())
+	}
 }
 
 func resolve(component base.Component, err error) (*pgxpool.Pool, bool, error) {

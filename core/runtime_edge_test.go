@@ -116,7 +116,7 @@ func TestHealthAfterCloseDoesNotProbe(t *testing.T) {
 	}
 }
 
-func TestHealthDuringClosingReturnsErrClosedWithoutProbing(t *testing.T) {
+func TestHealthDuringClosingReturnsErrNotRunningWithoutProbing(t *testing.T) {
 	k := NewKey("mock")
 	entered := make(chan struct{})
 	release := make(chan struct{})
@@ -145,7 +145,7 @@ func TestHealthDuringClosingReturnsErrClosedWithoutProbing(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Fatal(err)
 	}
-	if report.State != StateClosing || report.Healthy || !errors.Is(report.Err, ErrClosed) {
+	if report.State != StateClosing || report.Healthy || !errors.Is(report.Err, ErrNotRunning) || errors.Is(report.Err, ErrClosed) {
 		t.Fatalf("unexpected closing health: %+v", report)
 	}
 	if probes.Load() != 0 {

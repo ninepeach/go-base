@@ -80,6 +80,7 @@ func Register(key Key, instance string, build func() (Component, error), opts ..
 
 type options struct {
 	configPath    string
+	logger        *slog.Logger
 	registrations []Registration
 }
 type Option interface{ apply(*options) error }
@@ -89,6 +90,20 @@ func (f optionFunc) apply(o *options) error { return f(o) }
 func WithConfig(path string) Option {
 	return optionFunc(func(o *options) error { o.configPath = path; return nil })
 }
+
+// WithLogger makes l the Runtime logger; component loggers derive from it.
+// The caller owns l and its handler: the Runtime never closes or flushes it.
+// Without this option the Runtime logs to stderr through go-logger/v2.
+func WithLogger(l *slog.Logger) Option {
+	return optionFunc(func(o *options) error {
+		if l == nil {
+			return errors.New("base: nil logger")
+		}
+		o.logger = l
+		return nil
+	})
+}
+
 func Use(registrations ...Registration) Option {
 	return optionFunc(func(o *options) error { o.registrations = append(o.registrations, registrations...); return nil })
 }
