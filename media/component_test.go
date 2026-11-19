@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"time"
 	"testing"
 
 	base "github.com/ninepeach/go-base/core"
@@ -83,5 +84,41 @@ func TestComponentHealthStates(t *testing.T) {
 	}
 	if err := c.Health(context.Background()); !errors.Is(err, base.ErrClosed) {
 		t.Fatalf("after close: %v", err)
+	}
+}
+
+func TestComponentCloseWaitsAfterPreviousCallerTimesOut(t *testing.T) {
+	c := &Component{}
+	done := make(chan struct{})
+	var cancelled bool
+	c.cancel = func() { cancelled = true }
+	c.done = done
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := c.Close(ctx); !errors.Is(err, context.Canceled) {
+		t.Fatalf("first close: got %v, want context cancellation", err)
+	}
+	if !cancelled {
+		t.Fatal("cleanup cancellation was not requested")
+	}
+
+	waitCtx, stop := context.WithTimeout(context.Background(), time.Second)
+	defer stop()
+	result := make(chan error, 1)
+	go func() { result <- c.Close(waitCtx) }()
+	select {
+	case err := <-result:
+		t.Fatalf("second close returned before worker exited: %v", err)
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(done)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatalf("second close: %v", err)
+		}
+	case <-waitCtx.Done():
+		t.Fatal("second close did not observe worker exit")
 	}
 }
